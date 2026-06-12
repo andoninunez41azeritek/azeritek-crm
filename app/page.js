@@ -44,6 +44,8 @@ export default function Home() {
   const [newCo, setNewCo] = useState({ name:'', contact:'', email:'', phone:'', type:'', service: SERVICES[0] })
   const [newLead, setNewLead] = useState({ name:'', sector:'', amount:'', monthly:'', assigned:'AN', status:'contactado' })
   const [newCita, setNewCita] = useState({ company:'', date:'', time:'10:00', service: SERVICES[0], assigned:'Andoni', notes:'' })
+  const [pipelineModal, setPipelineModal] = useState(null) // empresa seleccionada para enviar al pipeline
+  const [pipelineForm, setPipelineForm] = useState({ status:'contactado', assigned:'AN', sector:'' })
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -101,6 +103,24 @@ export default function Home() {
   async function deleteCo(id) {
     await supabase.from('companies').delete().eq('id', id)
     setCompanies(companies.filter(c => c.id !== id))
+  }
+
+  async function sendToPipeline() {
+    if (!pipelineModal) return
+    const lead = {
+      name: pipelineModal.name,
+      sector: pipelineForm.sector || pipelineModal.type || '',
+      status: pipelineForm.status,
+      assigned: pipelineForm.assigned,
+      date: new Date().toLocaleDateString('es-ES'),
+      amount: '',
+      monthly: '',
+    }
+    const { data } = await supabase.from('leads').insert([lead]).select()
+    if (data) setLeads([data[0], ...leads])
+    setPipelineModal(null)
+    setPipelineForm({ status:'contactado', assigned:'AN', sector:'' })
+    setPage('pipeline')
   }
   function startEditCo(co) {
     setNewCo({ name: co.name, contact: co.contact||'', email: co.email||'', phone: co.phone||'', type: co.type||'', service: co.service||SERVICES[0] })
@@ -187,7 +207,22 @@ export default function Home() {
         <div style={{ padding:'20px 24px', flex:1 }}>
           {page === 'dashboard' && <Dashboard leads={leads} companies={companies} setPage={setPage} />}
           {page === 'calendar' && <CalendarPage events={CAL_EVENTS} showForm={showCitaForm} setShowForm={setShowCitaForm} newCita={newCita} setNewCita={setNewCita} onSave={saveCita} onDelete={deleteCita} appointments={appointments} />}
-          {page === 'companies' && <CompaniesPage companies={filteredCos} types={types} filter={coFilter} setFilter={setCoFilter} allCompanies={companies} showAdd={showAddCo} setShowAdd={setShowAddCo} newCo={newCo} setNewCo={setNewCo} onSave={saveCompany} onEdit={startEditCo} onDelete={deleteCo} editMode={!!editCo} role={role} />}
+          {page === 'companies' && <CompaniesPage companies={filteredCos} types={types} filter={coFilter} setFilter={setCoFilter} allCompanies={companies} showAdd={showAddCo} setShowAdd={setShowAddCo} newCo={newCo} setNewCo={setNewCo} onSave={saveCompany} onEdit={startEditCo} onDelete={deleteCo} editMode={!!editCo} role={role} onSendPipeline={co=>{ setPipelineModal(co); setPipelineForm({ status:'contactado', assigned:'AN', sector: co.type||'' }) }} />}
+          {pipelineModal && (
+            <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }}>
+              <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.2)', borderRadius:16, padding:28, width:380 }}>
+                <div style={{ fontSize:15, fontWeight:700, color:'#edf0f8', marginBottom:6 }}>📊 Añadir al pipeline</div>
+                <div style={{ fontSize:13, color:'#7880a0', marginBottom:20 }}>{pipelineModal.name}</div>
+                <FSel label="Estado inicial" value={pipelineForm.status} onChange={v=>setPipelineForm({...pipelineForm,status:v})} options={PIPE_COLS.map(c=>({ value:c.id, label:c.label }))} />
+                <FSel label="Comercial asignado" value={pipelineForm.assigned} onChange={v=>setPipelineForm({...pipelineForm,assigned:v})} options={['AN','JO','IK','MI','CO']} />
+                <FInput label="Sector" value={pipelineForm.sector} onChange={v=>setPipelineForm({...pipelineForm,sector:v})} placeholder="Ej: Hostelería, Retail..." />
+                <div style={{ display:'flex', gap:8, marginTop:4 }}>
+                  <Btn variant="primary" onClick={sendToPipeline}>✓ Añadir al pipeline</Btn>
+                  <Btn onClick={()=>setPipelineModal(null)}>Cancelar</Btn>
+                </div>
+              </div>
+            </div>
+          )}
           {page === 'pipeline' && <PipelinePage leads={filteredLeads} allLeads={leads} filter={pipeFilter} setFilter={setPipeFilter} showNew={showNewLead} setShowNew={setShowNewLead} newLead={newLead} setNewLead={setNewLead} onSave={saveLead} onEdit={startEditLead} onDelete={deleteLead} editMode={!!editLead} />}
           {page === 'types' && role === 'admin' && <TypesPage types={types} companies={companies} newType={newType} setNewType={setNewType} selColor={selColor} setSelColor={setSelColor} onAdd={addType} onDelete={deleteType} colors={COLORS} />}
           {page === 'team' && role === 'admin' && <TeamPage leads={leads} />}
@@ -392,7 +427,7 @@ function CalendarPage({ events, showForm, setShowForm, newCita, setNewCita, onSa
 }
 
 // ── COMPANIES ──────────────────────────────────────────
-function CompaniesPage({ companies, types, filter, setFilter, allCompanies, showAdd, setShowAdd, newCo, setNewCo, onSave, onEdit, onDelete, editMode, role }) {
+function CompaniesPage({ companies, types, filter, setFilter, allCompanies, showAdd, setShowAdd, newCo, setNewCo, onSave, onEdit, onDelete, editMode, role, onSendPipeline }) {
   return (
     <div>
       <div style={{ display:'flex', gap:6, marginBottom:16, flexWrap:'wrap' }}>
@@ -426,6 +461,7 @@ function CompaniesPage({ companies, types, filter, setFilter, allCompanies, show
               </div>
               {role==='admin' && (
                 <div style={{ display:'flex', gap:6, marginTop:10, borderTop:'1px solid rgba(255,255,255,.08)', paddingTop:10 }}>
+                  <Btn onClick={()=>onSendPipeline(c)} style={{ padding:'4px 10px', fontSize:12, background:'rgba(31,201,138,.15)', borderColor:'rgba(31,201,138,.4)', color:'#6ee7b7' }}>📊 Pipeline</Btn>
                   <Btn onClick={()=>onEdit(c)} style={{ padding:'4px 10px', fontSize:12 }}>✏️ Editar</Btn>
                   <Btn variant="danger" onClick={()=>onDelete(c.id)} style={{ padding:'4px 10px', fontSize:12 }}>🗑️ Eliminar</Btn>
                 </div>
