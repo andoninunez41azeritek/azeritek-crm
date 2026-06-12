@@ -22,6 +22,13 @@ const DEFAULT_TYPES = [
 ]
 const COLORS = ['#8b7fff','#3b9eff','#1fc98a','#f5a623','#ef4444','#ec4899','#a78bfa','#34d399','#60a5fa','#fbbf24','#fb923c','#14b8a6','#c084fc','#f472b6']
 const SERVICES = ['Agente IA WhatsApp','Reservas automáticas','CRM + integraciones','Web premium','Atención 24/7','Email automation']
+const COMERCIALES = [
+  { key: 'AN', name: 'Andoni' },
+  { key: 'JO', name: 'Jon' },
+  { key: 'IK', name: 'Iker' },
+  { key: 'MI', name: 'Miren' },
+  { key: 'CO', name: 'Comercial' },
+]
 
 export default function Home() {
   const [session, setSession] = useState(null)
@@ -32,20 +39,28 @@ export default function Home() {
   const [leads, setLeads] = useState([])
   const [types, setTypes] = useState(DEFAULT_TYPES)
   const [appointments, setAppointments] = useState([])
+
+  // UI state
   const [coFilter, setCoFilter] = useState('all')
   const [pipeFilter, setPipeFilter] = useState({ sector: 'all', user: 'all' })
   const [selColor, setSelColor] = useState('#8b7fff')
   const [newType, setNewType] = useState('')
-  const [showAddCo, setShowAddCo] = useState(false)
-  const [showCitaForm, setShowCitaForm] = useState(false)
-  const [showNewLead, setShowNewLead] = useState(false)
-  const [editCo, setEditCo] = useState(null)
-  const [editLead, setEditLead] = useState(null)
-  const [newCo, setNewCo] = useState({ name:'', contact:'', email:'', phone:'', type:'', service: SERVICES[0] })
-  const [newLead, setNewLead] = useState({ name:'', sector:'', amount:'', monthly:'', assigned:'AN', status:'contactado' })
-  const [newCita, setNewCita] = useState({ company:'', date:'', time:'10:00', service: SERVICES[0], assigned:'Andoni', notes:'' })
-  const [pipelineModal, setPipelineModal] = useState(null) // empresa seleccionada para enviar al pipeline
-  const [pipelineForm, setPipelineForm] = useState({ status:'contactado', assigned:'AN', sector:'' })
+
+  // Modals
+  const [modal, setModal] = useState(null) // 'addCo' | 'editCo' | 'addLead' | 'editLead' | 'addCita' | 'sendPipeline'
+  const [editTarget, setEditTarget] = useState(null)
+
+  // Forms
+  const emptyLead = { name:'', sector:'', amount:'', monthly:'', assigned:'AN', status:'contactado', flag_color:'', flag_date:'' }
+  const emptyCo = { name:'', contact:'', email:'', phone:'', type:'', service: SERVICES[0] }
+  const emptyCita = { company:'', date:'', time:'10:00', service: SERVICES[0], assigned:'Andoni', notes:'' }
+  const emptyPipeline = { status:'contactado', assigned:'AN', sector:'', amount:'', monthly:'' }
+
+  const [formLead, setFormLead] = useState(emptyLead)
+  const [formCo, setFormCo] = useState(emptyCo)
+  const [formCita, setFormCita] = useState(emptyCita)
+  const [formPipeline, setFormPipeline] = useState(emptyPipeline)
+  const [calMonth, setCalMonth] = useState(new Date())
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -81,80 +96,73 @@ export default function Home() {
     if (a.data) setAppointments(a.data)
   }
 
-  async function logout() {
-    await supabase.auth.signOut()
-    setPage('dashboard')
-  }
+  async function logout() { await supabase.auth.signOut(); setPage('dashboard') }
 
-  // COMPANIES CRUD
-  async function saveCompany() {
-    if (!newCo.name) return
-    if (editCo) {
-      const { data } = await supabase.from('companies').update(newCo).eq('id', editCo.id).select()
-      if (data) setCompanies(companies.map(c => c.id === editCo.id ? data[0] : c))
-      setEditCo(null)
+  // ── COMPANIES ──
+  async function saveCo() {
+    if (!formCo.name.trim()) return
+    const payload = { ...formCo, type: formCo.type || types[0]?.name }
+    if (editTarget) {
+      const { data } = await supabase.from('companies').update(payload).eq('id', editTarget.id).select()
+      if (data) setCompanies(companies.map(c => c.id === editTarget.id ? data[0] : c))
     } else {
-      const { data } = await supabase.from('companies').insert([{ ...newCo, type: newCo.type || types[0]?.name }]).select()
+      const { data } = await supabase.from('companies').insert([payload]).select()
       if (data) setCompanies([data[0], ...companies])
     }
-    setNewCo({ name:'', contact:'', email:'', phone:'', type:'', service: SERVICES[0] })
-    setShowAddCo(false)
+    setFormCo(emptyCo); setEditTarget(null); setModal(null)
   }
   async function deleteCo(id) {
+    if (!confirm('¿Eliminar esta empresa?')) return
     await supabase.from('companies').delete().eq('id', id)
     setCompanies(companies.filter(c => c.id !== id))
   }
 
-  async function sendToPipeline() {
-    if (!pipelineModal) return
-    const lead = {
-      name: pipelineModal.name,
-      sector: pipelineForm.sector || pipelineModal.type || '',
-      status: pipelineForm.status,
-      assigned: pipelineForm.assigned,
-      date: new Date().toLocaleDateString('es-ES'),
-      amount: '',
-      monthly: '',
-    }
-    const { data } = await supabase.from('leads').insert([lead]).select()
-    if (data) setLeads([data[0], ...leads])
-    setPipelineModal(null)
-    setPipelineForm({ status:'contactado', assigned:'AN', sector:'' })
-    setPage('pipeline')
-  }
-  function startEditCo(co) {
-    setNewCo({ name: co.name, contact: co.contact||'', email: co.email||'', phone: co.phone||'', type: co.type||'', service: co.service||SERVICES[0] })
-    setEditCo(co)
-    setShowAddCo(true)
-  }
-
-  // LEADS CRUD
+  // ── LEADS ──
   async function saveLead() {
-    if (!newLead.name) return
-    if (editLead) {
-      const { data } = await supabase.from('leads').update(newLead).eq('id', editLead.id).select()
-      if (data) setLeads(leads.map(l => l.id === editLead.id ? data[0] : l))
-      setEditLead(null)
+    if (!formLead.name.trim()) return
+    const payload = { ...formLead, amount: formLead.amount ? Number(formLead.amount) : null, monthly: formLead.monthly ? Number(formLead.monthly) : null }
+    if (editTarget) {
+      const { data } = await supabase.from('leads').update(payload).eq('id', editTarget.id).select()
+      if (data) setLeads(leads.map(l => l.id === editTarget.id ? data[0] : l))
     } else {
-      const { data } = await supabase.from('leads').insert([{ ...newLead, date: new Date().toLocaleDateString('es-ES') }]).select()
+      const withDate = { ...payload, date: new Date().toLocaleDateString('es-ES') }
+      const { data } = await supabase.from('leads').insert([withDate]).select()
       if (data) setLeads([data[0], ...leads])
     }
-    setNewLead({ name:'', sector:'', amount:'', monthly:'', assigned:'AN', status:'contactado' })
-    setShowNewLead(false)
+    setFormLead(emptyLead); setEditTarget(null); setModal(null)
   }
   async function deleteLead(id) {
+    if (!confirm('¿Eliminar este lead?')) return
     await supabase.from('leads').delete().eq('id', id)
     setLeads(leads.filter(l => l.id !== id))
   }
-  function startEditLead(lead) {
-    setNewLead({ name: lead.name, sector: lead.sector||'', amount: lead.amount||'', monthly: lead.monthly||'', assigned: lead.assigned||'AN', status: lead.status||'contactado' })
-    setEditLead(lead)
-    setShowNewLead(true)
+  async function changeLeadStatus(id, status) {
+    await supabase.from('leads').update({ status }).eq('id', id)
+    setLeads(leads.map(l => l.id === id ? { ...l, status } : l))
   }
 
-  // TYPES CRUD
+  // ── SEND TO PIPELINE ──
+  async function sendToPipeline() {
+    if (!editTarget) return
+    const lead = {
+      name: editTarget.name,
+      sector: formPipeline.sector || editTarget.type || '',
+      status: formPipeline.status,
+      assigned: formPipeline.assigned,
+      amount: formPipeline.amount ? Number(formPipeline.amount) : null,
+      monthly: formPipeline.monthly ? Number(formPipeline.monthly) : null,
+      date: new Date().toLocaleDateString('es-ES'),
+    }
+    const { data, error } = await supabase.from('leads').insert([lead]).select()
+    if (error) { alert('Error: ' + error.message); return }
+    if (data) setLeads([data[0], ...leads])
+    setFormPipeline(emptyPipeline); setEditTarget(null); setModal(null)
+    setPage('pipeline')
+  }
+
+  // ── TYPES ──
   async function addType() {
-    if (!newType) return
+    if (!newType.trim()) return
     const { data } = await supabase.from('types').insert([{ name: newType, color: selColor }]).select()
     if (data) setTypes([...types, data[0]])
     else setTypes([...types, { name: newType, color: selColor }])
@@ -166,69 +174,154 @@ export default function Home() {
     setTypes(types.filter((_, i) => i !== idx))
   }
 
-  // APPOINTMENTS
+  // ── APPOINTMENTS ──
   async function saveCita() {
-    const { data } = await supabase.from('appointments').insert([newCita]).select()
+    if (!formCita.company.trim() || !formCita.date) return
+    const { data } = await supabase.from('appointments').insert([formCita]).select()
     if (data) setAppointments([...appointments, data[0]])
-    setNewCita({ company:'', date:'', time:'10:00', service: SERVICES[0], assigned:'Andoni', notes:'' })
-    setShowCitaForm(false)
+    setFormCita(emptyCita); setModal(null)
   }
   async function deleteCita(id) {
     await supabase.from('appointments').delete().eq('id', id)
     setAppointments(appointments.filter(a => a.id !== id))
   }
 
-  const CAL_EVENTS = {}
-  appointments.forEach(a => {
-    if (!a.date) return
-    const d = new Date(a.date).getDate()
-    if (!CAL_EVENTS[d]) CAL_EVENTS[d] = []
-    CAL_EVENTS[d].push({ text: a.company + ' · ' + (a.time||'').slice(0,5), id: a.id })
-  })
-
+  const role = profile?.role || 'comercial'
   const filteredLeads = leads.filter(l => {
     if (pipeFilter.sector !== 'all' && l.sector !== pipeFilter.sector) return false
     if (pipeFilter.user !== 'all' && l.assigned !== pipeFilter.user) return false
     return true
   })
   const filteredCos = coFilter === 'all' ? companies : companies.filter(c => c.type === coFilter)
-  const role = profile?.role || 'comercial'
 
-  if (loading) return <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'#0b0d12', color:'#8b7fff', fontSize:16 }}>Cargando...</div>
+  if (loading) return <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'#0b0d12', color:'#8b7fff', fontSize:16, gap:12 }}><span style={{ animation:'spin 1s linear infinite', display:'inline-block' }}>⏳</span> Cargando...</div>
   if (!session) return <LoginScreen />
 
   return (
     <div style={{ display:'flex', height:'100vh', background:'#0b0d12', color:'#edf0f8', fontFamily:'var(--font-sans)' }}>
       <Sidebar page={page} setPage={setPage} role={role} profile={profile} onLogout={logout} leads={leads} />
       <div style={{ flex:1, overflow:'auto', display:'flex', flexDirection:'column' }}>
-        <Topbar title={{ dashboard:'Dashboard', calendar:'Calendario', companies:'Empresas', pipeline:'Pipeline', types:'Tipos de empresa', team:'Equipo', reports:'Informes' }[page]}
-          role={role} onNewCita={() => { setPage('calendar'); setShowCitaForm(true) }}
-          onAddCo={() => { setEditCo(null); setNewCo({ name:'', contact:'', email:'', phone:'', type:'', service: SERVICES[0] }); setPage('companies'); setShowAddCo(true) }} />
+        <Topbar page={page} role={role}
+          onNewCita={() => { setFormCita(emptyCita); setModal('addCita') }}
+          onAddCo={() => { setFormCo(emptyCo); setEditTarget(null); setModal('addCo') }}
+          onAddLead={() => { setFormLead(emptyLead); setEditTarget(null); setModal('addLead') }}
+        />
         <div style={{ padding:'20px 24px', flex:1 }}>
-          {page === 'dashboard' && <Dashboard leads={leads} companies={companies} setPage={setPage} />}
-          {page === 'calendar' && <CalendarPage events={CAL_EVENTS} showForm={showCitaForm} setShowForm={setShowCitaForm} newCita={newCita} setNewCita={setNewCita} onSave={saveCita} onDelete={deleteCita} appointments={appointments} />}
-          {page === 'companies' && <CompaniesPage companies={filteredCos} types={types} filter={coFilter} setFilter={setCoFilter} allCompanies={companies} showAdd={showAddCo} setShowAdd={setShowAddCo} newCo={newCo} setNewCo={setNewCo} onSave={saveCompany} onEdit={startEditCo} onDelete={deleteCo} editMode={!!editCo} role={role} onSendPipeline={co=>{ setPipelineModal(co); setPipelineForm({ status:'contactado', assigned:'AN', sector: co.type||'' }) }} />}
-          {pipelineModal && (
-            <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000 }}>
-              <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.2)', borderRadius:16, padding:28, width:380 }}>
-                <div style={{ fontSize:15, fontWeight:700, color:'#edf0f8', marginBottom:6 }}>📊 Añadir al pipeline</div>
-                <div style={{ fontSize:13, color:'#7880a0', marginBottom:20 }}>{pipelineModal.name}</div>
-                <FSel label="Estado inicial" value={pipelineForm.status} onChange={v=>setPipelineForm({...pipelineForm,status:v})} options={PIPE_COLS.map(c=>({ value:c.id, label:c.label }))} />
-                <FSel label="Comercial asignado" value={pipelineForm.assigned} onChange={v=>setPipelineForm({...pipelineForm,assigned:v})} options={['AN','JO','IK','MI','CO']} />
-                <FInput label="Sector" value={pipelineForm.sector} onChange={v=>setPipelineForm({...pipelineForm,sector:v})} placeholder="Ej: Hostelería, Retail..." />
-                <div style={{ display:'flex', gap:8, marginTop:4 }}>
-                  <Btn variant="primary" onClick={sendToPipeline}>✓ Añadir al pipeline</Btn>
-                  <Btn onClick={()=>setPipelineModal(null)}>Cancelar</Btn>
-                </div>
-              </div>
-            </div>
+          {page === 'dashboard' && <Dashboard leads={leads} companies={companies} setPage={setPage} appointments={appointments} />}
+          {page === 'calendar' && (
+            <CalendarPage appointments={appointments} month={calMonth} setMonth={setCalMonth}
+              onAdd={() => { setFormCita(emptyCita); setModal('addCita') }}
+              onDelete={deleteCita}
+              onSelectDay={(d) => { setFormCita({ ...emptyCita, date: d }); setModal('addCita') }}
+            />
           )}
-          {page === 'pipeline' && <PipelinePage leads={filteredLeads} allLeads={leads} filter={pipeFilter} setFilter={setPipeFilter} showNew={showNewLead} setShowNew={setShowNewLead} newLead={newLead} setNewLead={setNewLead} onSave={saveLead} onEdit={startEditLead} onDelete={deleteLead} editMode={!!editLead} />}
+          {page === 'companies' && (
+            <CompaniesPage companies={filteredCos} types={types} filter={coFilter} setFilter={setCoFilter}
+              allCompanies={companies} role={role}
+              onAdd={() => { setFormCo(emptyCo); setEditTarget(null); setModal('addCo') }}
+              onEdit={co => { setFormCo({ name:co.name, contact:co.contact||'', email:co.email||'', phone:co.phone||'', type:co.type||'', service:co.service||SERVICES[0] }); setEditTarget(co); setModal('addCo') }}
+              onDelete={deleteCo}
+              onSendPipeline={co => { setEditTarget(co); setFormPipeline({ ...emptyPipeline, sector: co.type||'' }); setModal('sendPipeline') }}
+            />
+          )}
+          {page === 'pipeline' && (
+            <PipelinePage leads={filteredLeads} allLeads={leads} filter={pipeFilter} setFilter={setPipeFilter}
+              onAdd={() => { setFormLead(emptyLead); setEditTarget(null); setModal('addLead') }}
+              onEdit={l => { setFormLead({ name:l.name, sector:l.sector||'', amount:l.amount||'', monthly:l.monthly||'', assigned:l.assigned||'AN', status:l.status||'contactado', flag_color:l.flag_color||'', flag_date:l.flag_date||'' }); setEditTarget(l); setModal('addLead') }}
+              onDelete={deleteLead}
+              onChangeStatus={changeLeadStatus}
+            />
+          )}
           {page === 'types' && role === 'admin' && <TypesPage types={types} companies={companies} newType={newType} setNewType={setNewType} selColor={selColor} setSelColor={setSelColor} onAdd={addType} onDelete={deleteType} colors={COLORS} />}
           {page === 'team' && role === 'admin' && <TeamPage leads={leads} />}
           {page === 'reports' && role === 'admin' && <ReportsPage leads={leads} companies={companies} />}
         </div>
       </div>
+
+      {/* ── MODALS ── */}
+      {(modal === 'addCo') && (
+        <Modal title={editTarget ? '✏️ Editar empresa' : '🏢 Nueva empresa'} onClose={() => setModal(null)}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <FInput label="Nombre de la empresa *" value={formCo.name} onChange={v=>setFormCo({...formCo,name:v})} placeholder="Ej: Restaurante Kaia" />
+            <FInput label="Persona de contacto" value={formCo.contact} onChange={v=>setFormCo({...formCo,contact:v})} placeholder="Nombre y apellido" />
+            <FInput label="Email" value={formCo.email} onChange={v=>setFormCo({...formCo,email:v})} type="email" placeholder="contacto@empresa.com" />
+            <FInput label="Teléfono" value={formCo.phone} onChange={v=>setFormCo({...formCo,phone:v})} placeholder="943 00 00 00" />
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <FSel label="Tipo de empresa" value={formCo.type} onChange={v=>setFormCo({...formCo,type:v})} options={types.map(t=>t.name)} />
+            <FSel label="Servicio de interés" value={formCo.service} onChange={v=>setFormCo({...formCo,service:v})} options={SERVICES} />
+          </div>
+          <div style={{ display:'flex', gap:8, marginTop:8 }}>
+            <Btn variant="primary" onClick={saveCo}>✓ {editTarget ? 'Guardar cambios' : 'Crear empresa'}</Btn>
+            <Btn onClick={() => setModal(null)}>Cancelar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'addLead' && (
+        <Modal title={editTarget ? '✏️ Editar lead' : '➕ Nuevo lead en pipeline'} onClose={() => setModal(null)}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <FInput label="Nombre del lead *" value={formLead.name} onChange={v=>setFormLead({...formLead,name:v})} placeholder="Ej: Restaurante Kaia" />
+            <FInput label="Sector" value={formLead.sector} onChange={v=>setFormLead({...formLead,sector:v})} placeholder="Ej: Hostelería" />
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <FSel label="Estado en pipeline" value={formLead.status} onChange={v=>setFormLead({...formLead,status:v})} options={PIPE_COLS.map(c=>({ value:c.id, label:c.label }))} />
+            <FSel label="Comercial asignado" value={formLead.assigned} onChange={v=>setFormLead({...formLead,assigned:v})} options={COMERCIALES.map(c=>({ value:c.key, label:c.name }))} />
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <FInput label="Importe (€)" value={formLead.amount} onChange={v=>setFormLead({...formLead,amount:v})} type="number" placeholder="0" />
+            <FInput label="Cuota mensual (€/mes)" value={formLead.monthly} onChange={v=>setFormLead({...formLead,monthly:v})} type="number" placeholder="0" />
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <FSel label="Flag de alerta" value={formLead.flag_color} onChange={v=>setFormLead({...formLead,flag_color:v})} options={[{ value:'', label:'Sin alerta' },{ value:'red', label:'🚩 Urgente (rojo)' },{ value:'blue', label:'📅 Seguimiento (azul)' }]} />
+            <FInput label="Fecha de alerta" value={formLead.flag_date} onChange={v=>setFormLead({...formLead,flag_date:v})} placeholder="Ej: 20/06" />
+          </div>
+          <div style={{ display:'flex', gap:8, marginTop:8 }}>
+            <Btn variant="primary" onClick={saveLead}>✓ {editTarget ? 'Guardar cambios' : 'Añadir al pipeline'}</Btn>
+            <Btn onClick={() => setModal(null)}>Cancelar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'sendPipeline' && editTarget && (
+        <Modal title={`📊 Enviar al pipeline`} onClose={() => setModal(null)}>
+          <div style={{ background:'rgba(139,127,255,.1)', border:'1px solid rgba(139,127,255,.3)', borderRadius:10, padding:'10px 14px', marginBottom:16 }}>
+            <div style={{ fontSize:14, fontWeight:600, color:'#edf0f8' }}>{editTarget.name}</div>
+            <div style={{ fontSize:12, color:'#7880a0', marginTop:2 }}>{editTarget.type} · {editTarget.contact}</div>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <FSel label="Estado inicial" value={formPipeline.status} onChange={v=>setFormPipeline({...formPipeline,status:v})} options={PIPE_COLS.map(c=>({ value:c.id, label:c.label }))} />
+            <FSel label="Comercial asignado" value={formPipeline.assigned} onChange={v=>setFormPipeline({...formPipeline,assigned:v})} options={COMERCIALES.map(c=>({ value:c.key, label:c.name }))} />
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <FInput label="Sector" value={formPipeline.sector} onChange={v=>setFormPipeline({...formPipeline,sector:v})} placeholder="Ej: Hostelería" />
+            <FInput label="Importe estimado (€)" value={formPipeline.amount} onChange={v=>setFormPipeline({...formPipeline,amount:v})} type="number" placeholder="0" />
+          </div>
+          <div style={{ display:'flex', gap:8, marginTop:8 }}>
+            <Btn variant="primary" onClick={sendToPipeline}>📊 Añadir al pipeline</Btn>
+            <Btn onClick={() => setModal(null)}>Cancelar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {modal === 'addCita' && (
+        <Modal title="📅 Nueva cita" onClose={() => setModal(null)}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <FInput label="Empresa *" value={formCita.company} onChange={v=>setFormCita({...formCita,company:v})} placeholder="Nombre de la empresa" />
+            <FSel label="Comercial" value={formCita.assigned} onChange={v=>setFormCita({...formCita,assigned:v})} options={COMERCIALES.map(c=>c.name)} />
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+            <FInput label="Fecha *" type="date" value={formCita.date} onChange={v=>setFormCita({...formCita,date:v})} />
+            <FInput label="Hora" type="time" value={formCita.time} onChange={v=>setFormCita({...formCita,time:v})} />
+          </div>
+          <FSel label="Servicio a tratar" value={formCita.service} onChange={v=>setFormCita({...formCita,service:v})} options={SERVICES} />
+          <FInput label="Notas" value={formCita.notes} onChange={v=>setFormCita({...formCita,notes:v})} placeholder="Contexto, objetivo de la reunión..." />
+          <div style={{ display:'flex', gap:8, marginTop:8 }}>
+            <Btn variant="primary" onClick={saveCita}>✓ Guardar cita</Btn>
+            <Btn onClick={() => setModal(null)}>Cancelar</Btn>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }
@@ -250,18 +343,19 @@ function LoginScreen() {
 
   return (
     <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'#0b0d12' }}>
-      <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.2)', borderRadius:18, padding:36, width:360 }}>
-        <div style={{ display:'flex', gap:12, marginBottom:28, alignItems:'center' }}>
-          <div style={{ width:44, height:44, background:'#8b7fff', borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:20, color:'#fff' }}>A</div>
-          <div><div style={{ fontSize:18, fontWeight:700, color:'#edf0f8' }}>Azeritek CRM</div><div style={{ fontSize:12, color:'#7880a0' }}>Panel de gestión comercial</div></div>
+      <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.2)', borderRadius:18, padding:40, width:380 }}>
+        <div style={{ textAlign:'center', marginBottom:32 }}>
+          <div style={{ width:56, height:56, background:'#8b7fff', borderRadius:16, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:24, color:'#fff', margin:'0 auto 16px' }}>A</div>
+          <div style={{ fontSize:22, fontWeight:700, color:'#edf0f8' }}>Azeritek CRM</div>
+          <div style={{ fontSize:13, color:'#7880a0', marginTop:4 }}>Panel de gestión comercial</div>
         </div>
         <FInput label="Email" value={email} onChange={setEmail} type="email" placeholder="tu@azeritek.es" />
         <FInput label="Contraseña" value={password} onChange={setPassword} type="password" placeholder="••••••••" />
-        {error && <div style={{ fontSize:12, color:'#ef4444', marginBottom:12, background:'rgba(239,68,68,.1)', padding:'8px 12px', borderRadius:8 }}>{error}</div>}
-        <Btn variant="primary" style={{ width:'100%', justifyContent:'center', padding:'11px 0', marginTop:4 }} onClick={handleLogin}>
-          {loading ? 'Entrando...' : 'Acceder →'}
+        {error && <div style={{ fontSize:12, color:'#ef4444', marginBottom:12, background:'rgba(239,68,68,.1)', padding:'10px 14px', borderRadius:9, border:'1px solid rgba(239,68,68,.2)' }}>⚠️ {error}</div>}
+        <Btn variant="primary" style={{ width:'100%', justifyContent:'center', padding:'12px 0', marginTop:4, fontSize:14 }} onClick={handleLogin}>
+          {loading ? '⏳ Entrando...' : 'Acceder →'}
         </Btn>
-        <div style={{ fontSize:11, color:'#4a5168', textAlign:'center', marginTop:16 }}>Azeritek · Donostia, País Vasco</div>
+        <div style={{ fontSize:11, color:'#4a5168', textAlign:'center', marginTop:20 }}>Azeritek · Donostia, País Vasco</div>
       </div>
     </div>
   )
@@ -286,7 +380,7 @@ function Sidebar({ page, setPage, role, profile, onLogout, leads }) {
         <div style={{ width:36, height:36, background:'#8b7fff', borderRadius:10, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:16, color:'#fff' }}>A</div>
         <div><div style={{ fontSize:15, fontWeight:700, color:'#edf0f8' }}>Azeritek</div><div style={{ fontSize:10, color:'#7880a0' }}>CRM comercial</div></div>
       </div>
-      <div style={{ padding:'12px 0', flex:1 }}>
+      <div style={{ padding:'8px 0', flex:1 }}>
         <div style={{ padding:'12px 16px 4px', fontSize:10, color:'#4a5168', textTransform:'uppercase', letterSpacing:'.1em', fontWeight:600 }}>Principal</div>
         {items.slice(0,2).map(item => <NavItem key={item.id} item={item} active={page===item.id} onClick={() => setPage(item.id)} />)}
         <div style={{ padding:'12px 16px 4px', fontSize:10, color:'#4a5168', textTransform:'uppercase', letterSpacing:'.1em', fontWeight:600 }}>Gestión</div>
@@ -294,12 +388,12 @@ function Sidebar({ page, setPage, role, profile, onLogout, leads }) {
       </div>
       <div style={{ padding:12, borderTop:'1px solid rgba(255,255,255,.12)' }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-          <div style={{ width:34, height:34, borderRadius:'50%', background:'rgba(139,127,255,.25)', color:'#c4beff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700 }}>{profile?.initials || profile?.name?.[0] || 'U'}</div>
-          <div style={{ flex:1 }}>
-            <div style={{ fontSize:13, fontWeight:600, color:'#edf0f8' }}>{profile?.name || profile?.email?.split('@')[0]}</div>
+          <div style={{ width:34, height:34, borderRadius:'50%', background:'rgba(139,127,255,.25)', color:'#c4beff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:700, flexShrink:0 }}>{profile?.initials || profile?.name?.[0] || 'U'}</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:13, fontWeight:600, color:'#edf0f8', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{profile?.name || profile?.email?.split('@')[0]}</div>
             <div style={{ fontSize:11, color:'#7880a0' }}>{role === 'admin' ? 'Administrador' : 'Comercial'}</div>
           </div>
-          <Btn onClick={onLogout} style={{ padding:'6px 8px' }}>↩</Btn>
+          <Btn onClick={onLogout} style={{ padding:'6px 8px', flexShrink:0 }} title="Cerrar sesión">↩</Btn>
         </div>
       </div>
     </div>
@@ -307,73 +401,108 @@ function Sidebar({ page, setPage, role, profile, onLogout, leads }) {
 }
 
 function NavItem({ item, active, onClick }) {
+  const [hover, setHover] = useState(false)
   return (
-    <div onClick={onClick} style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', borderRadius:8, cursor:'pointer', fontSize:13, color: active?'#edf0f8':'#b8c0d8', margin:'1px 8px', background: active?'rgba(139,127,255,.15)':'transparent', border: active?'1px solid rgba(139,127,255,.4)':'1px solid transparent' }}>
-      <span>{item.icon}</span><span style={{ flex:1 }}>{item.label}</span>
+    <div onClick={onClick} onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}
+      style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', borderRadius:8, cursor:'pointer', fontSize:13, color: active?'#edf0f8': hover?'#edf0f8':'#b8c0d8', margin:'1px 8px', background: active?'rgba(139,127,255,.15)': hover?'rgba(255,255,255,.05)':'transparent', border: active?'1px solid rgba(139,127,255,.4)':'1px solid transparent', transition:'all .15s' }}>
+      <span style={{ fontSize:15 }}>{item.icon}</span>
+      <span style={{ flex:1 }}>{item.label}</span>
       {item.badge ? <span style={{ background:'rgba(139,127,255,.3)', color:'#c4beff', fontSize:10, padding:'2px 7px', borderRadius:10, fontWeight:600 }}>{item.badge}</span> : null}
     </div>
   )
 }
 
 // ── TOPBAR ─────────────────────────────────────────────
-function Topbar({ title, role, onNewCita, onAddCo }) {
+function Topbar({ page, role, onNewCita, onAddCo, onAddLead }) {
+  const titles = { dashboard:'Dashboard', calendar:'Calendario de citas', companies:'Empresas', pipeline:'Pipeline comercial', types:'Tipos de empresa', team:'Equipo', reports:'Informes' }
+  const hints = { dashboard:'Resumen general', calendar:'Gestiona tus reuniones', companies:'Clientes y prospectos', pipeline:'Estado de los leads', types:'Categorías de empresa', team:'Miembros del equipo', reports:'Métricas y rendimiento' }
   return (
     <div style={{ padding:'14px 24px', background:'#13161f', borderBottom:'1px solid rgba(255,255,255,.12)', display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
-      <div style={{ fontSize:17, fontWeight:700, color:'#edf0f8' }}>{title}</div>
+      <div>
+        <div style={{ fontSize:17, fontWeight:700, color:'#edf0f8' }}>{titles[page]}</div>
+        <div style={{ fontSize:11, color:'#7880a0', marginTop:2 }}>{hints[page]}</div>
+      </div>
       <div style={{ display:'flex', gap:8 }}>
-        <Btn onClick={onNewCita}>📅 Nueva cita</Btn>
-        {role==='admin' && <Btn variant="primary" onClick={onAddCo}>+ Añadir empresa</Btn>}
+        <Btn onClick={onNewCita} title="Añadir una cita al calendario">📅 Nueva cita</Btn>
+        {page === 'pipeline' && <Btn variant="primary" onClick={onAddLead}>➕ Nuevo lead</Btn>}
+        {role === 'admin' && page !== 'pipeline' && <Btn variant="primary" onClick={onAddCo}>🏢 Añadir empresa</Btn>}
       </div>
     </div>
   )
 }
 
 // ── DASHBOARD ──────────────────────────────────────────
-function Dashboard({ leads, companies, setPage }) {
+function Dashboard({ leads, companies, setPage, appointments }) {
   const mrr = leads.filter(l=>l.status==='mantenimiento').reduce((s,l)=>s+(Number(l.monthly)||0),0)
+  const today = new Date().toISOString().split('T')[0]
+  const todayCitas = appointments.filter(a => a.date === today)
   return (
     <div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
         {[
-          { icon:'🏢', val: companies.length, label:'Empresas en cartera', delta:'+3 este mes', color:'rgba(139,127,255,.15)', ic:'#c4beff' },
-          { icon:'📊', val: leads.length, label:'Leads en pipeline', delta: leads.filter(l=>l.status==='presupuesto_enviado').length+' presupuestos', color:'rgba(245,166,35,.15)', ic:'#fcd34d' },
-          { icon:'✅', val: leads.filter(l=>l.status==='pedido').length, label:'Pedidos confirmados', delta:'este periodo', color:'rgba(31,201,138,.15)', ic:'#6ee7b7' },
-          { icon:'💰', val: `€${mrr}/mes`, label:'Ingresos recurrentes', delta:`${leads.filter(l=>l.status==='mantenimiento').length} clientes activos`, color:'rgba(59,158,255,.15)', ic:'#93c5fd' },
+          { icon:'🏢', val: companies.length, label:'Empresas', sub:'+3 este mes', color:'rgba(139,127,255,.15)', ic:'#c4beff', page:'companies' },
+          { icon:'📊', val: leads.length, label:'Leads activos', sub: leads.filter(l=>l.status==='presupuesto_enviado').length+' presupuestos pendientes', color:'rgba(245,166,35,.15)', ic:'#fcd34d', page:'pipeline' },
+          { icon:'✅', val: leads.filter(l=>l.status==='pedido').length, label:'Pedidos cerrados', sub:'este periodo', color:'rgba(31,201,138,.15)', ic:'#6ee7b7', page:'pipeline' },
+          { icon:'💰', val: `€${mrr}/mes`, label:'Ingresos recurrentes', sub: leads.filter(l=>l.status==='mantenimiento').length+' clientes activos', color:'rgba(59,158,255,.15)', ic:'#93c5fd', page:'pipeline' },
         ].map((s,i) => (
-          <div key={i} style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.2)', borderRadius:14, padding:16 }}>
+          <div key={i} onClick={()=>setPage(s.page)} style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.2)', borderRadius:14, padding:16, cursor:'pointer', transition:'all .15s' }}
+            onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(139,127,255,.4)'}
+            onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,.2)'}>
             <div style={{ width:36, height:36, borderRadius:10, background:s.color, color:s.ic, display:'flex', alignItems:'center', justifyContent:'center', fontSize:17, marginBottom:12 }}>{s.icon}</div>
             <div style={{ fontSize:26, fontWeight:700, color:'#edf0f8' }}>{s.val}</div>
-            <div style={{ fontSize:12, color:'#b8c0d8', marginTop:5 }}>{s.label}</div>
-            <div style={{ fontSize:11, color:'#1fc98a', marginTop:5 }}>{s.delta}</div>
+            <div style={{ fontSize:12, color:'#b8c0d8', marginTop:4, fontWeight:500 }}>{s.label}</div>
+            <div style={{ fontSize:11, color:'#1fc98a', marginTop:4 }}>{s.sub}</div>
           </div>
         ))}
       </div>
+
+      {todayCitas.length > 0 && (
+        <div style={{ background:'rgba(139,127,255,.08)', border:'1px solid rgba(139,127,255,.3)', borderRadius:14, padding:'14px 18px', marginBottom:16 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:'#c4beff', marginBottom:10 }}>📅 Citas de hoy</div>
+          <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+            {todayCitas.map((a,i) => (
+              <div key={i} style={{ background:'rgba(139,127,255,.15)', borderRadius:9, padding:'8px 14px', fontSize:13 }}>
+                <span style={{ fontWeight:600, color:'#edf0f8' }}>{a.company}</span>
+                <span style={{ color:'#7880a0', marginLeft:8 }}>{String(a.time||'').slice(0,5)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:16 }}>
-        <Card title="Actividad reciente" sub="Últimos leads">
+        <Card title="🕐 Actividad reciente" sub="Últimos leads añadidos">
+          {leads.length === 0 && <Empty text="No hay leads todavía. ¡Añade el primero desde Pipeline!" />}
           {leads.slice(0,5).map((l,i) => (
-            <div key={i} style={{ display:'flex', gap:12, padding:'10px 0', borderBottom:'1px solid rgba(255,255,255,.08)' }}>
-              <div style={{ width:8, height:8, borderRadius:'50%', background:'#8b7fff', marginTop:5, flexShrink:0 }}></div>
-              <div><div style={{ fontSize:13, color:'#edf0f8' }}>{l.name}</div><div style={{ fontSize:11, color:'#7880a0', marginTop:2 }}>{l.sector} · {l.status}</div></div>
+            <div key={i} style={{ display:'flex', gap:12, padding:'10px 0', borderBottom:'1px solid rgba(255,255,255,.06)' }}>
+              <div style={{ width:8, height:8, borderRadius:'50%', background: PIPE_COLS.find(c=>c.id===l.status)?.color||'#8b7fff', marginTop:5, flexShrink:0 }}></div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13, color:'#edf0f8', fontWeight:500 }}>{l.name}</div>
+                <div style={{ fontSize:11, color:'#7880a0', marginTop:2 }}>{l.sector} · <span style={{ color: PIPE_COLS.find(c=>c.id===l.status)?.color||'#8b7fff' }}>{PIPE_COLS.find(c=>c.id===l.status)?.label||l.status}</span></div>
+              </div>
+              <div style={{ fontSize:10, color:'#4a5168' }}>{l.date}</div>
             </div>
           ))}
-          {!leads.length && <div style={{ fontSize:13, color:'#7880a0' }}>No hay leads todavía</div>}
         </Card>
-        <Card title="Alertas" sub="Pendientes">
-          {leads.filter(l=>l.flag_color==='red').slice(0,4).map((l,i) => (
-            <div key={i} style={{ background:'rgba(239,68,68,.1)', border:'1px solid rgba(239,68,68,.2)', borderRadius:10, padding:'10px 14px', marginBottom:8 }}>
-              <div style={{ fontSize:13, fontWeight:500, color:'#edf0f8' }}>🚩 {l.name}</div>
-              <div style={{ fontSize:12, color:'#b8c0d8', marginTop:2 }}>{l.sector} · {l.flag_date}</div>
+        <Card title="🚨 Alertas activas" sub="Leads con flags pendientes">
+          {leads.filter(l=>l.flag_color).length === 0 && <Empty text="Sin alertas pendientes ✓" color="#1fc98a" />}
+          {leads.filter(l=>l.flag_color).slice(0,4).map((l,i) => (
+            <div key={i} style={{ background: l.flag_color==='red'?'rgba(239,68,68,.08)':'rgba(59,158,255,.08)', border:`1px solid ${l.flag_color==='red'?'rgba(239,68,68,.2)':'rgba(59,158,255,.2)'}`, borderRadius:10, padding:'10px 14px', marginBottom:8 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:'#edf0f8' }}>{l.flag_color==='red'?'🚩':'📅'} {l.name}</div>
+              <div style={{ fontSize:11, color:'#b8c0d8', marginTop:3 }}>{l.sector} · Fecha: <strong>{l.flag_date}</strong></div>
             </div>
           ))}
-          {!leads.filter(l=>l.flag_color==='red').length && <div style={{ fontSize:13, color:'#1fc98a' }}>✓ Sin alertas pendientes</div>}
         </Card>
       </div>
-      <Card title="Resumen del pipeline" action={<Btn onClick={()=>setPage('pipeline')}>Ver pipeline →</Btn>}>
+
+      <Card title="📊 Estado del pipeline" action={<Btn onClick={()=>setPage('pipeline')}>Ver pipeline →</Btn>}>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:8 }}>
           {PIPE_COLS.slice(1).map(col => (
-            <div key={col.id} onClick={()=>setPage('pipeline')} style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.2)', borderRadius:10, padding:12, textAlign:'center', cursor:'pointer' }}>
-              <div style={{ fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'.06em', color:col.color, marginBottom:8 }}>{col.label}</div>
-              <div style={{ fontSize:24, fontWeight:700, color:'#edf0f8' }}>{leads.filter(l=>l.status===col.id).length}</div>
+            <div key={col.id} onClick={()=>setPage('pipeline')} style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.12)', borderRadius:10, padding:12, textAlign:'center', cursor:'pointer', transition:'all .15s' }}
+              onMouseEnter={e=>{ e.currentTarget.style.borderColor=col.color; e.currentTarget.style.background='#262c3e' }}
+              onMouseLeave={e=>{ e.currentTarget.style.borderColor='rgba(255,255,255,.12)'; e.currentTarget.style.background='#1c2030' }}>
+              <div style={{ fontSize:9, fontWeight:700, textTransform:'uppercase', letterSpacing:'.06em', color:col.color, marginBottom:8 }}>{col.label}</div>
+              <div style={{ fontSize:28, fontWeight:700, color:'#edf0f8' }}>{leads.filter(l=>l.status===col.id).length}</div>
             </div>
           ))}
         </div>
@@ -383,118 +512,163 @@ function Dashboard({ leads, companies, setPage }) {
 }
 
 // ── CALENDAR ───────────────────────────────────────────
-function CalendarPage({ events, showForm, setShowForm, newCita, setNewCita, onSave, onDelete, appointments }) {
+function CalendarPage({ appointments, month, setMonth, onAdd, onDelete, onSelectDay }) {
+  const year = month.getFullYear()
+  const mon = month.getMonth()
+  const monthNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+  const firstDay = new Date(year, mon, 1).getDay()
+  const offset = firstDay === 0 ? 6 : firstDay - 1
+  const daysInMonth = new Date(year, mon + 1, 0).getDate()
+  const today = new Date()
+
+  const evByDay = {}
+  appointments.forEach(a => {
+    if (!a.date) return
+    const d = new Date(a.date)
+    if (d.getFullYear() === year && d.getMonth() === mon) {
+      const day = d.getDate()
+      if (!evByDay[day]) evByDay[day] = []
+      evByDay[day].push(a)
+    }
+  })
+
+  const upcoming = appointments
+    .filter(a => a.date && new Date(a.date) >= new Date())
+    .sort((a,b) => new Date(a.date) - new Date(b.date))
+    .slice(0, 5)
+
   return (
-    <div>
-      <Card title="Junio 2025" sub={`${appointments.length} citas`} action={<Btn variant="primary" onClick={()=>setShowForm(!showForm)}>+ Nueva cita</Btn>}>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:4, marginBottom:8 }}>
-          {['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(d=><div key={d} style={{ fontSize:11, textAlign:'center', color:'#7880a0', padding:'4px 0', fontWeight:600 }}>{d}</div>)}
-        </div>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:4 }}>
-          {Array.from({length:30},(_,i)=>i+1).map(d=>(
-            <div key={d} style={{ minHeight:54, background: events[d]?'rgba(139,127,255,.1)':'#1c2030', border:`1px solid ${d===12?'rgba(139,127,255,.7)':events[d]?'rgba(139,127,255,.4)':'rgba(255,255,255,.12)'}`, borderRadius:9, padding:'6px 7px' }}>
-              <div style={{ fontSize:12, fontWeight:600, color: d===12?'#c4beff':'#b8c0d8', marginBottom:3 }}>{d}</div>
-              {events[d]?.map((ev,i)=>(
-                <div key={i} style={{ display:'flex', alignItems:'center', gap:4 }}>
-                  <div style={{ fontSize:9, background:'#8b7fff', color:'#fff', borderRadius:4, padding:'2px 5px', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{ev.text}</div>
-                  <div onClick={()=>onDelete(ev.id)} style={{ cursor:'pointer', color:'#ef4444', fontSize:10, flexShrink:0 }}>×</div>
-                </div>
-              ))}
+    <div style={{ display:'grid', gridTemplateColumns:'1fr 300px', gap:16 }}>
+      <div>
+        <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.12)', borderRadius:14, padding:'18px 20px', marginBottom:16 }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
+            <div>
+              <div style={{ fontSize:18, fontWeight:700, color:'#edf0f8' }}>{monthNames[mon]} {year}</div>
+              <div style={{ fontSize:12, color:'#7880a0', marginTop:2 }}>{appointments.filter(a=>{ const d=new Date(a.date); return d.getFullYear()===year&&d.getMonth()===mon }).length} citas este mes</div>
             </div>
-          ))}
+            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+              <Btn onClick={() => setMonth(new Date(year, mon-1))} style={{ padding:'6px 12px' }}>←</Btn>
+              <Btn onClick={() => setMonth(new Date())} style={{ padding:'6px 12px', fontSize:12 }}>Hoy</Btn>
+              <Btn onClick={() => setMonth(new Date(year, mon+1))} style={{ padding:'6px 12px' }}>→</Btn>
+              <Btn variant="primary" onClick={onAdd}>+ Nueva cita</Btn>
+            </div>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:4, marginBottom:8 }}>
+            {['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(d=><div key={d} style={{ fontSize:11, textAlign:'center', color:'#4a5168', padding:'6px 0', fontWeight:700, textTransform:'uppercase', letterSpacing:'.05em' }}>{d}</div>)}
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:4 }}>
+            {Array.from({length:offset}).map((_,i) => <div key={'e'+i}></div>)}
+            {Array.from({length:daysInMonth},(_,i)=>i+1).map(d => {
+              const isToday = d===today.getDate() && mon===today.getMonth() && year===today.getFullYear()
+              const evs = evByDay[d] || []
+              const dateStr = `${year}-${String(mon+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+              return (
+                <div key={d} onClick={() => onSelectDay(dateStr)}
+                  style={{ minHeight:64, background: isToday?'rgba(139,127,255,.12)': evs.length?'rgba(139,127,255,.06)':'#1c2030', border:`1.5px solid ${isToday?'#8b7fff': evs.length?'rgba(139,127,255,.3)':'rgba(255,255,255,.08)'}`, borderRadius:10, padding:'7px 8px', cursor:'pointer', transition:'all .15s' }}
+                  onMouseEnter={e=>{ if(!isToday) e.currentTarget.style.borderColor='rgba(139,127,255,.5)'; e.currentTarget.style.background='rgba(139,127,255,.1)' }}
+                  onMouseLeave={e=>{ e.currentTarget.style.borderColor=isToday?'#8b7fff':evs.length?'rgba(139,127,255,.3)':'rgba(255,255,255,.08)'; e.currentTarget.style.background=isToday?'rgba(139,127,255,.12)':evs.length?'rgba(139,127,255,.06)':'#1c2030' }}>
+                  <div style={{ fontSize:12, fontWeight: isToday?700:500, color: isToday?'#c4beff':'#b8c0d8', marginBottom:4 }}>{d}</div>
+                  {evs.slice(0,2).map((ev,i)=>(
+                    <div key={i} style={{ fontSize:10, background:'#8b7fff', color:'#fff', borderRadius:4, padding:'2px 5px', marginBottom:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:500 }}>{ev.company}</div>
+                  ))}
+                  {evs.length > 2 && <div style={{ fontSize:9, color:'#7880a0' }}>+{evs.length-2} más</div>}
+                </div>
+              )
+            })}
+          </div>
         </div>
-      </Card>
-      {showForm && (
-        <Card title="Nueva cita">
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12 }}>
-            <FInput label="Empresa" value={newCita.company} onChange={v=>setNewCita({...newCita,company:v})} />
-            <FInput label="Fecha" type="date" value={newCita.date} onChange={v=>setNewCita({...newCita,date:v})} />
-            <FInput label="Hora" type="time" value={newCita.time} onChange={v=>setNewCita({...newCita,time:v})} />
-          </div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-            <FSel label="Servicio" value={newCita.service} onChange={v=>setNewCita({...newCita,service:v})} options={SERVICES} />
-            <FInput label="Comercial" value={newCita.assigned} onChange={v=>setNewCita({...newCita,assigned:v})} />
-          </div>
-          <FInput label="Notas" value={newCita.notes} onChange={v=>setNewCita({...newCita,notes:v})} placeholder="Contexto, motivo..." />
-          <div style={{ display:'flex', gap:8 }}>
-            <Btn variant="primary" onClick={onSave}>✓ Guardar cita</Btn>
-            <Btn onClick={()=>setShowForm(false)}>Cancelar</Btn>
-          </div>
+      </div>
+
+      <div>
+        <Card title="📋 Próximas citas" sub={`${upcoming.length} pendientes`}>
+          {upcoming.length === 0 && <Empty text="No hay citas próximas" />}
+          {upcoming.map((a,i) => {
+            const d = new Date(a.date)
+            const isToday = d.toDateString() === new Date().toDateString()
+            return (
+              <div key={i} style={{ background: isToday?'rgba(139,127,255,.1)':'rgba(255,255,255,.03)', border:`1px solid ${isToday?'rgba(139,127,255,.3)':'rgba(255,255,255,.08)'}`, borderRadius:10, padding:'11px 14px', marginBottom:8 }}>
+                <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between' }}>
+                  <div style={{ flex:1 }}>
+                    {isToday && <div style={{ fontSize:10, color:'#c4beff', fontWeight:700, marginBottom:4 }}>HOY</div>}
+                    <div style={{ fontSize:13, fontWeight:600, color:'#edf0f8' }}>{a.company}</div>
+                    <div style={{ fontSize:11, color:'#7880a0', marginTop:3 }}>
+                      {d.toLocaleDateString('es-ES', { weekday:'short', day:'numeric', month:'short' })} · {String(a.time||'').slice(0,5)}
+                    </div>
+                    {a.service && <div style={{ fontSize:10, color:'#8b7fff', marginTop:4 }}>🔧 {a.service}</div>}
+                    {a.assigned && <div style={{ fontSize:10, color:'#7880a0', marginTop:2 }}>👤 {a.assigned}</div>}
+                    {a.notes && <div style={{ fontSize:11, color:'#5a6382', marginTop:4, fontStyle:'italic' }}>"{a.notes}"</div>}
+                  </div>
+                  <button onClick={()=>onDelete(a.id)} style={{ background:'none', border:'none', color:'#ef4444', cursor:'pointer', fontSize:16, padding:'0 0 0 8px', opacity:.6 }} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='.6'}>×</button>
+                </div>
+              </div>
+            )
+          })}
         </Card>
-      )}
+      </div>
     </div>
   )
 }
 
 // ── COMPANIES ──────────────────────────────────────────
-function CompaniesPage({ companies, types, filter, setFilter, allCompanies, showAdd, setShowAdd, newCo, setNewCo, onSave, onEdit, onDelete, editMode, role, onSendPipeline }) {
+function CompaniesPage({ companies, types, filter, setFilter, allCompanies, role, onAdd, onEdit, onDelete, onSendPipeline }) {
   return (
     <div>
-      <div style={{ display:'flex', gap:6, marginBottom:16, flexWrap:'wrap' }}>
-        <FilterBtn active={filter==='all'} onClick={()=>setFilter('all')}>Todas ({allCompanies.length})</FilterBtn>
-        {types.filter(t=>allCompanies.some(c=>c.type===t.name)).map(t=>(
-          <FilterBtn key={t.name} active={filter===t.name} onClick={()=>setFilter(t.name)}>
-            <span style={{ width:8, height:8, borderRadius:'50%', background:t.color, display:'inline-block', verticalAlign:'middle', marginRight:5 }}></span>
-            {t.name} ({allCompanies.filter(c=>c.type===t.name).length})
-          </FilterBtn>
-        ))}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap', flex:1 }}>
+          <FilterBtn active={filter==='all'} onClick={()=>setFilter('all')}>Todas ({allCompanies.length})</FilterBtn>
+          {types.filter(t=>allCompanies.some(c=>c.type===t.name)).map(t=>(
+            <FilterBtn key={t.name} active={filter===t.name} onClick={()=>setFilter(t.name)}>
+              <span style={{ width:8, height:8, borderRadius:'50%', background:t.color, display:'inline-block' }}></span>
+              {t.name} ({allCompanies.filter(c=>c.type===t.name).length})
+            </FilterBtn>
+          ))}
+        </div>
+        {role==='admin' && <Btn variant="primary" onClick={onAdd} style={{ marginLeft:12, flexShrink:0 }}>🏢 Nueva empresa</Btn>}
       </div>
+
+      {companies.length === 0 && (
+        <Empty text={filter==='all' ? "No hay empresas todavía. Pulsa '+ Nueva empresa' para añadir la primera." : "No hay empresas en esta categoría."} />
+      )}
+
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
         {companies.map((c,i) => {
           const col = types.find(t=>t.name===c.type)?.color || '#7880a0'
           return (
-            <div key={i} style={{ background:'#1a1f2e', border:'1px solid rgba(255,255,255,.18)', borderRadius:14, padding:15 }}>
-              <div style={{ display:'flex', gap:11, marginBottom:12 }}>
-                <div style={{ width:42, height:42, borderRadius:11, background:col, display:'flex', alignItems:'center', justifyContent:'center', fontSize:17, fontWeight:700, color:'#fff', flexShrink:0 }}>{c.name?.[0]}</div>
+            <div key={i} style={{ background:'#1a1f2e', border:'1px solid rgba(255,255,255,.12)', borderRadius:14, padding:16, transition:'border-color .15s' }}
+              onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(255,255,255,.25)'}
+              onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,.12)'}>
+              <div style={{ display:'flex', gap:12, marginBottom:12 }}>
+                <div style={{ width:44, height:44, borderRadius:12, background:col, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, fontWeight:700, color:'#fff', flexShrink:0 }}>{c.name?.[0]?.toUpperCase()}</div>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:14, fontWeight:600, color:'#edf0f8' }}>{c.name}</div>
-                  <div style={{ fontSize:12, color:'#b8c0d8', display:'flex', alignItems:'center', gap:5, marginTop:2 }}>
-                    <span style={{ width:6, height:6, borderRadius:'50%', background:col, display:'inline-block' }}></span>{c.type}
+                  <div style={{ fontSize:14, fontWeight:700, color:'#edf0f8' }}>{c.name}</div>
+                  <div style={{ fontSize:12, color:'#b8c0d8', display:'flex', alignItems:'center', gap:5, marginTop:3 }}>
+                    <span style={{ width:6, height:6, borderRadius:'50%', background:col, display:'inline-block', flexShrink:0 }}></span>{c.type || 'Sin tipo'}
                   </div>
                 </div>
-                <span style={{ fontSize:10, padding:'3px 9px', borderRadius:6, background:'rgba(139,127,255,.22)', color:'#c4beff', border:'1px solid rgba(139,127,255,.4)', whiteSpace:'nowrap', alignSelf:'flex-start' }}>{c.service}</span>
+                {c.service && <span style={{ fontSize:10, padding:'3px 9px', borderRadius:6, background:'rgba(139,127,255,.18)', color:'#c4beff', border:'1px solid rgba(139,127,255,.3)', whiteSpace:'nowrap', alignSelf:'flex-start', fontWeight:500 }}>{c.service}</span>}
               </div>
-              <div style={{ borderTop:'1px solid rgba(255,255,255,.08)', paddingTop:10, display:'grid', gap:4 }}>
-                {[['👤',c.contact],['✉️',c.email],['📞',c.phone]].map(([icon,val],j)=>(
-                  <div key={j} style={{ display:'flex', gap:8, fontSize:12, color:'#b8c0d8' }}><span>{icon}</span><span>{val}</span></div>
-                ))}
+              <div style={{ borderTop:'1px solid rgba(255,255,255,.06)', paddingTop:10, display:'grid', gap:5 }}>
+                {c.contact && <div style={{ display:'flex', gap:8, fontSize:12, color:'#b8c0d8' }}><span>👤</span><span>{c.contact}</span></div>}
+                {c.email && <div style={{ display:'flex', gap:8, fontSize:12, color:'#b8c0d8' }}><span>✉️</span><span>{c.email}</span></div>}
+                {c.phone && <div style={{ display:'flex', gap:8, fontSize:12, color:'#b8c0d8' }}><span>📞</span><span>{c.phone}</span></div>}
               </div>
               {role==='admin' && (
-                <div style={{ display:'flex', gap:6, marginTop:10, borderTop:'1px solid rgba(255,255,255,.08)', paddingTop:10 }}>
-                  <Btn onClick={()=>onSendPipeline(c)} style={{ padding:'4px 10px', fontSize:12, background:'rgba(31,201,138,.15)', borderColor:'rgba(31,201,138,.4)', color:'#6ee7b7' }}>📊 Pipeline</Btn>
-                  <Btn onClick={()=>onEdit(c)} style={{ padding:'4px 10px', fontSize:12 }}>✏️ Editar</Btn>
-                  <Btn variant="danger" onClick={()=>onDelete(c.id)} style={{ padding:'4px 10px', fontSize:12 }}>🗑️ Eliminar</Btn>
+                <div style={{ display:'flex', gap:6, marginTop:12, borderTop:'1px solid rgba(255,255,255,.06)', paddingTop:12 }}>
+                  <Btn onClick={()=>onSendPipeline(c)} style={{ flex:1, justifyContent:'center', padding:'6px 0', fontSize:12, background:'rgba(31,201,138,.12)', borderColor:'rgba(31,201,138,.3)', color:'#6ee7b7' }}>📊 Enviar al pipeline</Btn>
+                  <Btn onClick={()=>onEdit(c)} style={{ padding:'6px 10px', fontSize:12 }}>✏️</Btn>
+                  <Btn variant="danger" onClick={()=>onDelete(c.id)} style={{ padding:'6px 10px', fontSize:12 }}>🗑️</Btn>
                 </div>
               )}
             </div>
           )
         })}
       </div>
-      {!companies.length && <div style={{ textAlign:'center', padding:40, color:'#7880a0', fontSize:13 }}>No hay empresas en este tipo</div>}
-      {showAdd && (
-        <Card title={editMode ? 'Editar empresa' : 'Nueva empresa'} style={{ marginTop:14 }}>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-            <FInput label="Nombre" value={newCo.name} onChange={v=>setNewCo({...newCo,name:v})} placeholder="Ej: Metalurgia Lasa SL" />
-            <FInput label="Contacto" value={newCo.contact} onChange={v=>setNewCo({...newCo,contact:v})} />
-            <FInput label="Email" value={newCo.email} onChange={v=>setNewCo({...newCo,email:v})} type="email" />
-            <FInput label="Teléfono" value={newCo.phone} onChange={v=>setNewCo({...newCo,phone:v})} />
-          </div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-            <FSel label="Tipo" value={newCo.type} onChange={v=>setNewCo({...newCo,type:v})} options={types.map(t=>t.name)} />
-            <FSel label="Servicio de interés" value={newCo.service} onChange={v=>setNewCo({...newCo,service:v})} options={SERVICES} />
-          </div>
-          <div style={{ display:'flex', gap:8 }}>
-            <Btn variant="primary" onClick={onSave}>✓ {editMode ? 'Guardar cambios' : 'Guardar empresa'}</Btn>
-            <Btn onClick={()=>setShowAdd(false)}>Cancelar</Btn>
-          </div>
-        </Card>
-      )}
     </div>
   )
 }
 
 // ── PIPELINE ───────────────────────────────────────────
-function PipelinePage({ leads, allLeads, filter, setFilter, showNew, setShowNew, newLead, setNewLead, onSave, onEdit, onDelete, editMode }) {
+function PipelinePage({ leads, allLeads, filter, setFilter, onAdd, onEdit, onDelete, onChangeStatus }) {
   const presup = allLeads.filter(l=>l.status==='presupuesto_enviado').reduce((s,l)=>s+(Number(l.amount)||0),0)
   const ganado = allLeads.filter(l=>l.status==='pedido').reduce((s,l)=>s+(Number(l.amount)||0),0)
   const mant = allLeads.filter(l=>l.status==='mantenimiento').reduce((s,l)=>s+(Number(l.monthly)||0),0)
@@ -503,85 +677,83 @@ function PipelinePage({ leads, allLeads, filter, setFilter, showNew, setShowNew,
 
   return (
     <div>
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:5 }}>
-        <div>
-          <div style={{ fontSize:17, fontWeight:700, color:'#edf0f8' }}>Pipeline comercial</div>
-          <div style={{ fontSize:13, color:'#7880a0', marginTop:2 }}>{leads.length} leads activos</div>
-        </div>
-        <Btn variant="primary" onClick={()=>{ setShowNew(!showNew); if(showNew){ setNewLead({ name:'', sector:'', amount:'', monthly:'', assigned:'AN', status:'contactado' }) } }}>+ Nuevo lead</Btn>
-      </div>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, margin:'14px 0 16px' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:16 }}>
         {[
           { label:'Presupuestado', val:`€${presup.toLocaleString()}`, sub: allLeads.filter(l=>l.status==='presupuesto_enviado').length+' leads', bg:'rgba(139,127,255,.08)', bd:'rgba(139,127,255,.25)', color:'#c4beff' },
           { label:'Ganado', val:`€${ganado.toLocaleString()}`, sub: allLeads.filter(l=>l.status==='pedido').length+' leads', bg:'rgba(31,201,138,.08)', bd:'rgba(31,201,138,.25)', color:'#6ee7b7' },
           { label:'Mantenimiento', val:`€${mant}/mes`, sub: allLeads.filter(l=>l.status==='mantenimiento').length+' activos', bg:'rgba(20,184,166,.08)', bd:'rgba(20,184,166,.25)', color:'#5eead4' },
           { label:'Perdido', val:`€${perdido.toLocaleString()}`, sub: allLeads.filter(l=>l.status==='perdido').length+' leads', bg:'rgba(239,68,68,.06)', bd:'rgba(239,68,68,.2)', color:'#fca5a5' },
         ].map((m,i)=>(
-          <div key={i} style={{ background:m.bg, border:`1px solid ${m.bd}`, borderRadius:12, padding:'14px 16px' }}>
-            <div style={{ fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'.08em', color:'#7880a0', marginBottom:8 }}>{m.label}</div>
-            <div style={{ fontSize:24, fontWeight:700, color:m.color, marginBottom:3 }}>{m.val}</div>
-            <div style={{ fontSize:12, color:'#7880a0' }}>{m.sub}</div>
+          <div key={i} style={{ background:m.bg, border:`1px solid ${m.bd}`, borderRadius:12, padding:'13px 16px' }}>
+            <div style={{ fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'.08em', color:'#7880a0', marginBottom:6 }}>{m.label}</div>
+            <div style={{ fontSize:22, fontWeight:700, color:m.color, marginBottom:3 }}>{m.val}</div>
+            <div style={{ fontSize:11, color:'#7880a0' }}>{m.sub}</div>
           </div>
         ))}
       </div>
+
       <div style={{ display:'flex', gap:8, marginBottom:16, flexWrap:'wrap', alignItems:'center' }}>
-        <select value={filter.sector} onChange={e=>setFilter({...filter,sector:e.target.value})} style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.2)', borderRadius:9, color:'#edf0f8', fontSize:12, padding:'7px 12px', cursor:'pointer', outline:'none' }}>
-          <option value="all">Todos los sectores</option>
+        <select value={filter.sector} onChange={e=>setFilter({...filter,sector:e.target.value})}
+          style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.2)', borderRadius:9, color:'#edf0f8', fontSize:12, padding:'7px 12px', cursor:'pointer', outline:'none' }}>
+          <option value="all">🏭 Todos los sectores</option>
           {SECTORS.map(s=><option key={s} value={s}>{s}</option>)}
         </select>
-        <select value={filter.user} onChange={e=>setFilter({...filter,user:e.target.value})} style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.2)', borderRadius:9, color:'#edf0f8', fontSize:12, padding:'7px 12px', cursor:'pointer', outline:'none' }}>
-          <option value="all">Todos los usuarios</option>
-          {['AN','JO','IK','MI','CO'].map(u=><option key={u} value={u}>{u}</option>)}
+        <select value={filter.user} onChange={e=>setFilter({...filter,user:e.target.value})}
+          style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.2)', borderRadius:9, color:'#edf0f8', fontSize:12, padding:'7px 12px', cursor:'pointer', outline:'none' }}>
+          <option value="all">👥 Todos los comerciales</option>
+          {COMERCIALES.map(c=><option key={c.key} value={c.key}>{c.name}</option>)}
         </select>
+        {(filter.sector!=='all'||filter.user!=='all') && (
+          <Btn onClick={()=>setFilter({sector:'all',user:'all'})} style={{ padding:'5px 10px', fontSize:11 }}>✕ Limpiar filtros</Btn>
+        )}
+        <div style={{ marginLeft:'auto', fontSize:12, color:'#7880a0' }}>{leads.length} leads</div>
       </div>
-      {showNew && (
-        <Card title={editMode ? 'Editar lead' : 'Nuevo lead'} style={{ marginBottom:16 }}>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-            <FInput label="Nombre" value={newLead.name} onChange={v=>setNewLead({...newLead,name:v})} placeholder="Nombre del lead" />
-            <FInput label="Sector" value={newLead.sector} onChange={v=>setNewLead({...newLead,sector:v})} placeholder="Ej: Hostelería" />
-            <FInput label="Importe (€)" value={newLead.amount} onChange={v=>setNewLead({...newLead,amount:v})} type="number" />
-            <FInput label="Mensual (€/mes)" value={newLead.monthly} onChange={v=>setNewLead({...newLead,monthly:v})} type="number" />
-          </div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-            <FSel label="Estado" value={newLead.status} onChange={v=>setNewLead({...newLead,status:v})} options={PIPE_COLS.map(c=>({ value:c.id, label:c.label }))} />
-            <FSel label="Comercial" value={newLead.assigned} onChange={v=>setNewLead({...newLead,assigned:v})} options={['AN','JO','IK','MI','CO']} />
-          </div>
-          <div style={{ display:'flex', gap:8 }}>
-            <Btn variant="primary" onClick={onSave}>✓ {editMode ? 'Guardar cambios' : 'Guardar lead'}</Btn>
-            <Btn onClick={()=>setShowNew(false)}>Cancelar</Btn>
-          </div>
-        </Card>
+
+      {allLeads.length === 0 && (
+        <Empty text="No hay leads en el pipeline. Pulsa '+ Nuevo lead' o envía una empresa desde la sección Empresas." />
       )}
-      <div style={{ overflowX:'auto', paddingBottom:6 }}>
-        <div style={{ display:'grid', gridTemplateColumns:`repeat(${PIPE_COLS.length},minmax(145px,1fr))`, gap:9, minWidth:900 }}>
+
+      <div style={{ overflowX:'auto', paddingBottom:8 }}>
+        <div style={{ display:'grid', gridTemplateColumns:`repeat(${PIPE_COLS.length},minmax(160px,1fr))`, gap:9, minWidth:1000 }}>
           {PIPE_COLS.map(col => {
             const colLeads = leads.filter(l=>l.status===col.id)
             return (
-              <div key={col.id} style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.14)', borderRadius:12, padding:'11px 9px', minHeight:200, display:'flex', flexDirection:'column', gap:7 }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 3px', marginBottom:6 }}>
+              <div key={col.id} style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.1)', borderRadius:12, padding:'11px 9px', minHeight:200, display:'flex', flexDirection:'column', gap:7 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 4px', marginBottom:6 }}>
                   <span style={{ fontSize:10, fontWeight:700, letterSpacing:'.07em', textTransform:'uppercase', color:col.color }}>{col.label}</span>
-                  <span style={{ fontSize:11, fontWeight:700, background:'#1c2030', border:'1px solid rgba(255,255,255,.18)', borderRadius:10, padding:'2px 8px', color:'#b8c0d8' }}>{colLeads.length}</span>
+                  <span style={{ fontSize:11, fontWeight:700, background:'rgba(255,255,255,.06)', border:'1px solid rgba(255,255,255,.1)', borderRadius:10, padding:'2px 8px', color:'#b8c0d8' }}>{colLeads.length}</span>
                 </div>
-                {colLeads.length===0
-                  ? <div style={{ textAlign:'center', padding:'24px 0', fontSize:12, color:'#4a5168', border:'1px dashed rgba(255,255,255,.08)', borderRadius:9 }}>Sin leads</div>
+                {colLeads.length === 0
+                  ? <div style={{ textAlign:'center', padding:'20px 8px', fontSize:11, color:'#4a5168', border:'1px dashed rgba(255,255,255,.07)', borderRadius:9, lineHeight:1.5 }}>Sin leads aquí</div>
                   : colLeads.map((l,i) => {
                     const avc = AV_COLORS[l.assigned] || '#7880a0'
                     return (
-                      <div key={i} style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.18)', borderRadius:10, padding:'11px 12px', cursor:'pointer' }}>
-                        <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:4 }}>
+                      <div key={i} style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.12)', borderRadius:10, padding:'10px 11px', transition:'border-color .15s' }}
+                        onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(255,255,255,.28)'}
+                        onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,.12)'}>
+                        <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:5 }}>
                           <div style={{ fontSize:12, fontWeight:600, color:'#edf0f8', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginRight:8 }}>{l.name}</div>
-                          <div style={{ width:26, height:26, borderRadius:'50%', background:avc, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:700, color:'#fff', flexShrink:0 }}>{l.assigned}</div>
+                          <div style={{ width:24, height:24, borderRadius:'50%', background:avc, display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:700, color:'#fff', flexShrink:0 }} title={COMERCIALES.find(c=>c.key===l.assigned)?.name||l.assigned}>{l.assigned}</div>
                         </div>
-                        <div style={{ fontSize:11, color:'#7880a0', marginBottom:6 }}>{l.sector}</div>
-                        {l.amount ? <div style={{ fontSize:14, fontWeight:700, color:col.color, marginBottom:7 }}>€{Number(l.amount).toLocaleString()}</div> : null}
-                        {l.monthly ? <div style={{ fontSize:14, fontWeight:700, color:col.color, marginBottom:7 }}>€{l.monthly}<span style={{ fontSize:10, fontWeight:400 }}>/mes</span></div> : null}
-                        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6 }}>
-                          <span style={{ fontSize:10, color:'#4a5168' }}>{l.date}</span>
-                          {l.flag_color && <span style={{ fontSize:10, fontWeight:600, padding:'2px 7px', borderRadius:5, background:l.flag_color==='red'?'rgba(239,68,68,.18)':'rgba(59,158,255,.18)', color:l.flag_color==='red'?'#fca5a5':'#93c5fd' }}>{l.flag_color==='red'?'🚩':'📅'} {l.flag_date}</span>}
-                        </div>
-                        <div style={{ display:'flex', gap:4, borderTop:'1px solid rgba(255,255,255,.08)', paddingTop:6 }}>
-                          <Btn onClick={()=>onEdit(l)} style={{ padding:'3px 8px', fontSize:11 }}>✏️</Btn>
-                          <Btn variant="danger" onClick={()=>onDelete(l.id)} style={{ padding:'3px 8px', fontSize:11 }}>🗑️</Btn>
+                        {l.sector && <div style={{ fontSize:11, color:'#7880a0', marginBottom:6 }}>{l.sector}</div>}
+                        {l.amount ? <div style={{ fontSize:13, fontWeight:700, color:col.color, marginBottom:5 }}>€{Number(l.amount).toLocaleString()}</div> : null}
+                        {l.monthly ? <div style={{ fontSize:13, fontWeight:700, color:col.color, marginBottom:5 }}>€{l.monthly}<span style={{ fontSize:10, fontWeight:400 }}>/mes</span></div> : null}
+                        {l.flag_color && (
+                          <div style={{ fontSize:10, fontWeight:600, padding:'3px 8px', borderRadius:5, background:l.flag_color==='red'?'rgba(239,68,68,.18)':'rgba(59,158,255,.18)', color:l.flag_color==='red'?'#fca5a5':'#93c5fd', display:'inline-block', marginBottom:6 }}>
+                            {l.flag_color==='red'?'🚩':'📅'} {l.flag_date}
+                          </div>
+                        )}
+                        <div style={{ fontSize:10, color:'#4a5168', marginBottom:7 }}>{l.date}</div>
+                        <div style={{ borderTop:'1px solid rgba(255,255,255,.07)', paddingTop:7 }}>
+                          <div style={{ fontSize:10, color:'#7880a0', marginBottom:5 }}>Mover a:</div>
+                          <select value={l.status} onChange={e=>onChangeStatus(l.id, e.target.value)}
+                            style={{ width:'100%', background:'#13161f', border:'1px solid rgba(255,255,255,.15)', borderRadius:7, color:'#edf0f8', fontSize:11, padding:'5px 8px', cursor:'pointer', outline:'none', marginBottom:6 }}>
+                            {PIPE_COLS.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
+                          </select>
+                          <div style={{ display:'flex', gap:4 }}>
+                            <Btn onClick={()=>onEdit(l)} style={{ flex:1, justifyContent:'center', padding:'4px 0', fontSize:11 }}>✏️ Editar</Btn>
+                            <Btn variant="danger" onClick={()=>onDelete(l.id)} style={{ padding:'4px 8px', fontSize:11 }}>🗑️</Btn>
+                          </div>
                         </div>
                       </div>
                     )
@@ -600,30 +772,33 @@ function PipelinePage({ leads, allLeads, filter, setFilter, showNew, setShowNew,
 function TypesPage({ types, companies, newType, setNewType, selColor, setSelColor, onAdd, onDelete, colors }) {
   return (
     <Card title="Tipos de empresa" sub="Define categorías con colores personalizados">
-      <div style={{ marginBottom:8 }}>
+      {types.length === 0 && <Empty text="No hay tipos creados todavía." />}
+      <div style={{ marginBottom:16 }}>
         {types.map((t,i) => (
-          <div key={i} style={{ display:'flex', alignItems:'center', gap:11, padding:'10px 0', borderBottom:'1px solid rgba(255,255,255,.08)' }}>
-            <div style={{ width:34, height:34, borderRadius:9, background:t.color, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-              <span style={{ fontSize:14, fontWeight:700, color:'#fff' }}>{t.name?.[0]}</span>
+          <div key={i} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 0', borderBottom:'1px solid rgba(255,255,255,.07)' }}>
+            <div style={{ width:36, height:36, borderRadius:9, background:t.color, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+              <span style={{ fontSize:15, fontWeight:700, color:'#fff' }}>{t.name?.[0]}</span>
             </div>
-            <div style={{ flex:1, fontSize:13, fontWeight:500, color:'#edf0f8' }}>{t.name}</div>
-            <div style={{ fontSize:12, color:'#7880a0' }}>{companies.filter(c=>c.type===t.name).length} empresas</div>
-            <Btn variant="danger" onClick={()=>onDelete(i)} style={{ padding:'5px 10px' }}>🗑️</Btn>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:'#edf0f8' }}>{t.name}</div>
+              <div style={{ fontSize:11, color:'#7880a0', marginTop:2 }}>{companies.filter(c=>c.type===t.name).length} empresas asignadas</div>
+            </div>
+            <Btn variant="danger" onClick={()=>onDelete(i)} style={{ padding:'5px 10px' }}>🗑️ Eliminar</Btn>
           </div>
         ))}
       </div>
-      <div style={{ borderTop:'1px solid rgba(255,255,255,.08)', paddingTop:18, marginTop:8 }}>
-        <div style={{ fontSize:13, fontWeight:600, color:'#edf0f8', marginBottom:13 }}>Crear nuevo tipo</div>
-        <FInput label="Nombre" value={newType} onChange={setNewType} placeholder="Ej: Farmacia, Energía, Logística..." />
-        <div style={{ marginBottom:12 }}>
-          <label style={{ fontSize:12, color:'#b8c0d8', marginBottom:8, display:'block', fontWeight:500 }}>Color</label>
-          <div style={{ display:'flex', gap:7, flexWrap:'wrap' }}>
+      <div style={{ borderTop:'1px solid rgba(255,255,255,.08)', paddingTop:18 }}>
+        <div style={{ fontSize:13, fontWeight:600, color:'#edf0f8', marginBottom:14 }}>➕ Crear nuevo tipo</div>
+        <FInput label="Nombre del tipo" value={newType} onChange={setNewType} placeholder="Ej: Farmacia, Energía, Logística..." />
+        <div style={{ marginBottom:14 }}>
+          <label style={{ fontSize:12, color:'#b8c0d8', marginBottom:8, display:'block', fontWeight:500 }}>Elige un color</label>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
             {colors.map(c=>(
-              <div key={c} onClick={()=>setSelColor(c)} style={{ width:28, height:28, borderRadius:7, background:c, cursor:'pointer', border:selColor===c?'2px solid #fff':'2px solid transparent', transform:selColor===c?'scale(1.12)':'scale(1)', transition:'all .15s' }}></div>
+              <div key={c} onClick={()=>setSelColor(c)} style={{ width:30, height:30, borderRadius:8, background:c, cursor:'pointer', border:selColor===c?'3px solid #fff':'3px solid transparent', transform:selColor===c?'scale(1.15)':'scale(1)', transition:'all .15s' }} title={c}></div>
             ))}
           </div>
         </div>
-        <Btn variant="primary" onClick={onAdd}>+ Crear tipo</Btn>
+        <Btn variant="primary" onClick={onAdd}>✓ Crear tipo</Btn>
       </div>
     </Card>
   )
@@ -636,13 +811,19 @@ function TeamPage({ leads }) {
     { ini:'C', name:'Comercial', email:'comercial@azeritek.es', role:'comercial', color:'rgba(31,201,138,.2)', tc:'#6ee7b7', key:'CO' },
   ]
   return (
-    <Card title="Equipo comercial" action={<Btn variant="primary">+ Añadir miembro</Btn>}>
+    <Card title="Equipo comercial">
       {team.map((m,i)=>(
-        <div key={i} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 0', borderBottom: i<team.length-1?'1px solid rgba(255,255,255,.08)':'none' }}>
-          <div style={{ width:34, height:34, borderRadius:'50%', background:m.color, color:m.tc, display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, flexShrink:0 }}>{m.ini}</div>
-          <div style={{ flex:1 }}><div style={{ fontSize:13, fontWeight:600, color:'#edf0f8' }}>{m.name}</div><div style={{ fontSize:11, color:'#b8c0d8' }}>{m.email}</div></div>
-          <div style={{ fontSize:12, color:'#7880a0' }}>{leads.filter(l=>l.assigned===m.key).length} leads</div>
-          <span style={{ fontSize:10, padding:'3px 10px', borderRadius:10, fontWeight:600, background:m.role==='admin'?'rgba(139,127,255,.22)':'rgba(31,201,138,.18)', color:m.role==='admin'?'#c4beff':'#6ee7b7' }}>{m.role==='admin'?'Admin':'Comercial'}</span>
+        <div key={i} style={{ display:'flex', alignItems:'center', gap:12, padding:'14px 0', borderBottom: i<team.length-1?'1px solid rgba(255,255,255,.08)':'none' }}>
+          <div style={{ width:40, height:40, borderRadius:'50%', background:m.color, color:m.tc, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:700, flexShrink:0 }}>{m.ini}</div>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:14, fontWeight:600, color:'#edf0f8' }}>{m.name}</div>
+            <div style={{ fontSize:12, color:'#b8c0d8', marginTop:2 }}>{m.email}</div>
+          </div>
+          <div style={{ textAlign:'right' }}>
+            <div style={{ fontSize:13, fontWeight:600, color:'#edf0f8' }}>{leads.filter(l=>l.assigned===m.key).length}</div>
+            <div style={{ fontSize:11, color:'#7880a0' }}>leads activos</div>
+          </div>
+          <span style={{ fontSize:11, padding:'4px 12px', borderRadius:10, fontWeight:600, background:m.role==='admin'?'rgba(139,127,255,.22)':'rgba(31,201,138,.18)', color:m.role==='admin'?'#c4beff':'#6ee7b7' }}>{m.role==='admin'?'Admin':'Comercial'}</span>
         </div>
       ))}
     </Card>
@@ -656,8 +837,8 @@ function ReportsPage({ leads, companies }) {
     <div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
         {[
-          { val: leads.filter(l=>l.status==='pedido').length, label:'Pedidos confirmados', delta:'este periodo', color:'rgba(31,201,138,.15)', tc:'#6ee7b7', icon:'✅' },
-          { val: '€'+leads.filter(l=>l.status==='presupuesto_enviado').reduce((s,l)=>s+(Number(l.amount)||0),0).toLocaleString(), label:'Presupuestado activo', delta: leads.filter(l=>l.status==='presupuesto_enviado').length+' leads', color:'rgba(139,127,255,.15)', tc:'#c4beff', icon:'📋' },
+          { val: leads.filter(l=>l.status==='pedido').length, label:'Pedidos cerrados', delta:'este periodo', color:'rgba(31,201,138,.15)', tc:'#6ee7b7', icon:'✅' },
+          { val: '€'+leads.filter(l=>l.status==='presupuesto_enviado').reduce((s,l)=>s+(Number(l.amount)||0),0).toLocaleString(), label:'En presupuesto', delta: leads.filter(l=>l.status==='presupuesto_enviado').length+' leads', color:'rgba(139,127,255,.15)', tc:'#c4beff', icon:'📋' },
           { val: `€${mrr}/mes`, label:'Ingresos recurrentes', delta: leads.filter(l=>l.status==='mantenimiento').length+' clientes', color:'rgba(20,184,166,.15)', tc:'#5eead4', icon:'🔄' },
           { val: companies.length, label:'Empresas en cartera', delta:'total acumulado', color:'rgba(59,158,255,.15)', tc:'#93c5fd', icon:'🏢' },
         ].map((s,i)=>(
@@ -672,22 +853,22 @@ function ReportsPage({ leads, companies }) {
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
         <Card title="Servicios más solicitados">
           {[['Agente IA WhatsApp',72,'#8b7fff'],['Reservas automáticas',58,'#3b9eff'],['CRM + integraciones',45,'#1fc98a'],['Email automation',30,'#f5a623'],['Web premium',22,'#ef4444']].map(([label,pct,color],i)=>(
-            <div key={i} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:9 }}>
-              <div style={{ fontSize:12, color:'#b8c0d8', width:150 }}>{label}</div>
+            <div key={i} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
+              <div style={{ fontSize:12, color:'#b8c0d8', width:160 }}>{label}</div>
               <div style={{ flex:1, height:7, background:'#1c2030', borderRadius:4, overflow:'hidden' }}><div style={{ width:`${pct}%`, height:'100%', background:color, borderRadius:4 }}></div></div>
-              <div style={{ fontSize:12, color:'#edf0f8', width:30, textAlign:'right', fontWeight:600 }}>{pct}%</div>
+              <div style={{ fontSize:12, color:'#edf0f8', width:32, textAlign:'right', fontWeight:600 }}>{pct}%</div>
             </div>
           ))}
         </Card>
-        <Card title="Pipeline por estado">
+        <Card title="Estado del pipeline">
           {PIPE_COLS.slice(1).map((col,i)=>{
             const cnt = leads.filter(l=>l.status===col.id).length
             const max = Math.max(...PIPE_COLS.slice(1).map(c=>leads.filter(l=>l.status===c.id).length), 1)
             return (
-              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:9 }}>
-                <div style={{ fontSize:12, color:'#b8c0d8', width:150 }}>{col.label}</div>
-                <div style={{ flex:1, height:7, background:'#1c2030', borderRadius:4, overflow:'hidden' }}><div style={{ width:`${(cnt/max)*100}%`, height:'100%', background:col.color, borderRadius:4 }}></div></div>
-                <div style={{ fontSize:12, color:'#edf0f8', width:30, textAlign:'right', fontWeight:600 }}>{cnt}</div>
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
+                <div style={{ fontSize:12, color:'#b8c0d8', width:160 }}>{col.label}</div>
+                <div style={{ flex:1, height:7, background:'#1c2030', borderRadius:4, overflow:'hidden' }}><div style={{ width:`${(cnt/max)*100}%`, height:'100%', background:col.color, borderRadius:4, transition:'width .3s' }}></div></div>
+                <div style={{ fontSize:12, color:'#edf0f8', width:32, textAlign:'right', fontWeight:600 }}>{cnt}</div>
               </div>
             )
           })}
@@ -697,10 +878,24 @@ function ReportsPage({ leads, companies }) {
   )
 }
 
-// ── SHARED ─────────────────────────────────────────────
-function Card({ title, sub, action, children, style }) {
+// ── SHARED COMPONENTS ──────────────────────────────────
+function Modal({ title, onClose, children }) {
   return (
-    <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.18)', borderRadius:14, padding:'18px 20px', marginBottom:16, ...style }}>
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, padding:20 }} onClick={e=>{ if(e.target===e.currentTarget) onClose() }}>
+      <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.2)', borderRadius:16, padding:28, width:'100%', maxWidth:520, maxHeight:'90vh', overflow:'auto' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:22 }}>
+          <div style={{ fontSize:16, fontWeight:700, color:'#edf0f8' }}>{title}</div>
+          <button onClick={onClose} style={{ background:'none', border:'none', color:'#7880a0', cursor:'pointer', fontSize:20, padding:'0 4px', lineHeight:1 }} onMouseEnter={e=>e.currentTarget.style.color='#edf0f8'} onMouseLeave={e=>e.currentTarget.style.color='#7880a0'}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function Card({ title, sub, action, children }) {
+  return (
+    <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.12)', borderRadius:14, padding:'18px 20px', marginBottom:16 }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
         <div>
           <div style={{ fontSize:14, fontWeight:600, color:'#edf0f8' }}>{title}</div>
@@ -713,12 +908,22 @@ function Card({ title, sub, action, children, style }) {
   )
 }
 
+function Empty({ text, color }) {
+  return (
+    <div style={{ textAlign:'center', padding:'32px 20px', color: color||'#4a5168', fontSize:13, lineHeight:1.6 }}>
+      {text}
+    </div>
+  )
+}
+
 function FInput({ label, value, onChange, type='text', placeholder }) {
   return (
     <div style={{ marginBottom:12 }}>
       <label style={{ fontSize:12, color:'#b8c0d8', marginBottom:5, display:'block', fontWeight:500 }}>{label}</label>
       <input type={type} value={value||''} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
-        style={{ width:'100%', padding:'9px 12px', border:'1px solid rgba(255,255,255,.2)', borderRadius:9, fontSize:13, background:'#1c2030', color:'#edf0f8', outline:'none' }} />
+        style={{ width:'100%', padding:'9px 12px', border:'1px solid rgba(255,255,255,.18)', borderRadius:9, fontSize:13, background:'#1c2030', color:'#edf0f8', outline:'none', transition:'border-color .15s' }}
+        onFocus={e=>e.target.style.borderColor='rgba(139,127,255,.6)'}
+        onBlur={e=>e.target.style.borderColor='rgba(255,255,255,.18)'} />
     </div>
   )
 }
@@ -728,7 +933,7 @@ function FSel({ label, value, onChange, options }) {
     <div style={{ marginBottom:12 }}>
       <label style={{ fontSize:12, color:'#b8c0d8', marginBottom:5, display:'block', fontWeight:500 }}>{label}</label>
       <select value={value||''} onChange={e=>onChange(e.target.value)}
-        style={{ width:'100%', padding:'9px 12px', border:'1px solid rgba(255,255,255,.2)', borderRadius:9, fontSize:13, background:'#1c2030', color:'#edf0f8', outline:'none' }}>
+        style={{ width:'100%', padding:'9px 12px', border:'1px solid rgba(255,255,255,.18)', borderRadius:9, fontSize:13, background:'#1c2030', color:'#edf0f8', outline:'none' }}>
         {options.map(o => typeof o === 'string'
           ? <option key={o} value={o}>{o}</option>
           : <option key={o.value} value={o.value}>{o.label}</option>
@@ -738,16 +943,16 @@ function FSel({ label, value, onChange, options }) {
   )
 }
 
-function Btn({ children, onClick, variant, style }) {
+function Btn({ children, onClick, variant, style, title }) {
   const C = {
     primary: { bg:'#8b7fff', bd:'#8b7fff', co:'#fff', hbg:'#6a5fd4' },
     danger:  { bg:'rgba(239,68,68,.18)', bd:'rgba(239,68,68,.45)', co:'#fca5a5', hbg:'rgba(239,68,68,.3)' },
-    default: { bg:'#1c2030', bd:'rgba(255,255,255,.28)', co:'#fff', hbg:'#2e3450' },
+    default: { bg:'#1c2030', bd:'rgba(255,255,255,.22)', co:'#fff', hbg:'#2e3450' },
   }
   const c = C[variant] || C.default
   const [hover, setHover] = useState(false)
   return (
-    <button onClick={onClick} onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}
+    <button onClick={onClick} title={title} onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}
       style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'7px 14px', borderRadius:9, fontSize:13, cursor:'pointer', fontWeight:600, whiteSpace:'nowrap', border:`1px solid ${c.bd}`, background: hover?c.hbg:c.bg, color:c.co, transition:'all .15s', ...style }}>
       {children}
     </button>
@@ -758,7 +963,7 @@ function FilterBtn({ children, active, onClick }) {
   const [hover, setHover] = useState(false)
   return (
     <button onClick={onClick} onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}
-      style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'6px 14px', borderRadius:20, fontSize:12, cursor:'pointer', fontWeight: active?700:500, border:`1px solid ${active?'rgba(139,127,255,.5)':'rgba(255,255,255,.2)'}`, background: active?'rgba(139,127,255,.2)': hover?'#2e3450':'#1c2030', color:'#ffffff', transition:'all .15s' }}>
+      style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'6px 13px', borderRadius:20, fontSize:12, cursor:'pointer', fontWeight: active?700:500, border:`1px solid ${active?'rgba(139,127,255,.5)':'rgba(255,255,255,.15)'}`, background: active?'rgba(139,127,255,.2)': hover?'rgba(255,255,255,.06)':'#1c2030', color:'#ffffff', transition:'all .15s' }}>
       {children}
     </button>
   )
