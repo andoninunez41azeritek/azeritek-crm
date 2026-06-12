@@ -177,11 +177,27 @@ export default function Home() {
   // ── APPOINTMENTS ──
   async function saveCita() {
     if (!formCita.company.trim() || !formCita.date) return
-    const { data } = await supabase.from('appointments').insert([formCita]).select()
-    if (data) setAppointments([...appointments, data[0]])
-    setFormCita(emptyCita); setModal(null)
+    // Validar que no haya otra cita el mismo día y hora
+    const duplicate = appointments.find(a =>
+      a.date === formCita.date &&
+      String(a.time||'').slice(0,5) === String(formCita.time||'').slice(0,5) &&
+      (!editTarget || a.id !== editTarget.id)
+    )
+    if (duplicate) {
+      alert(`⚠️ Ya hay una cita con ${duplicate.company} el ${formCita.date} a las ${String(formCita.time).slice(0,5)}. Elige otra hora.`)
+      return
+    }
+    if (editTarget) {
+      const { data } = await supabase.from('appointments').update(formCita).eq('id', editTarget.id).select()
+      if (data) setAppointments(appointments.map(a => a.id === editTarget.id ? data[0] : a))
+    } else {
+      const { data } = await supabase.from('appointments').insert([formCita]).select()
+      if (data) setAppointments([...appointments, data[0]])
+    }
+    setFormCita(emptyCita); setEditTarget(null); setModal(null)
   }
   async function deleteCita(id) {
+    if (!confirm('¿Eliminar esta cita?')) return
     await supabase.from('appointments').delete().eq('id', id)
     setAppointments(appointments.filter(a => a.id !== id))
   }
@@ -210,9 +226,10 @@ export default function Home() {
           {page === 'dashboard' && <Dashboard leads={leads} companies={companies} setPage={setPage} appointments={appointments} />}
           {page === 'calendar' && (
             <CalendarPage appointments={appointments} month={calMonth} setMonth={setCalMonth}
-              onAdd={() => { setFormCita(emptyCita); setModal('addCita') }}
+              onAdd={() => { setFormCita(emptyCita); setEditTarget(null); setModal('addCita') }}
               onDelete={deleteCita}
-              onSelectDay={(d) => { setFormCita({ ...emptyCita, date: d }); setModal('addCita') }}
+              onEdit={a => { setFormCita({ company:a.company||'', date:a.date||'', time:a.time||'10:00', service:a.service||SERVICES[0], assigned:a.assigned||'Andoni', notes:a.notes||'' }); setEditTarget(a); setModal('addCita') }}
+              onSelectDay={(d) => { setFormCita({ ...emptyCita, date: d }); setEditTarget(null); setModal('addCita') }}
             />
           )}
           {page === 'companies' && (
@@ -305,7 +322,7 @@ export default function Home() {
       )}
 
       {modal === 'addCita' && (
-        <Modal title="📅 Nueva cita" onClose={() => setModal(null)}>
+        <Modal title={editTarget ? '✏️ Editar cita' : '📅 Nueva cita'} onClose={() => { setModal(null); setEditTarget(null) }}>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
             <FInput label="Empresa *" value={formCita.company} onChange={v=>setFormCita({...formCita,company:v})} placeholder="Nombre de la empresa" />
             <FSel label="Comercial" value={formCita.assigned} onChange={v=>setFormCita({...formCita,assigned:v})} options={COMERCIALES.map(c=>c.name)} />
@@ -512,7 +529,9 @@ function Dashboard({ leads, companies, setPage, appointments }) {
 }
 
 // ── CALENDAR ───────────────────────────────────────────
-function CalendarPage({ appointments, month, setMonth, onAdd, onDelete, onSelectDay }) {
+// ── CALENDAR ───────────────────────────────────────────
+function CalendarPage({ appointments, month, setMonth, onAdd, onDelete, onEdit, onSelectDay }) {
+  const [openDay, setOpenDay] = useState(null)
   const year = month.getFullYear()
   const mon = month.getMonth()
   const monthNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
@@ -535,21 +554,28 @@ function CalendarPage({ appointments, month, setMonth, onAdd, onDelete, onSelect
   const upcoming = appointments
     .filter(a => a.date && new Date(a.date) >= new Date())
     .sort((a,b) => new Date(a.date) - new Date(b.date))
-    .slice(0, 5)
+    .slice(0, 8)
+
+  function handleDayClick(d, evs, dateStr) {
+    if (evs.length > 0) setOpenDay(openDay === d ? null : d)
+    else onSelectDay(dateStr)
+  }
 
   return (
     <div style={{ display:'grid', gridTemplateColumns:'1fr 300px', gap:16 }}>
       <div>
-        <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.12)', borderRadius:14, padding:'18px 20px', marginBottom:16 }}>
+        <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.12)', borderRadius:14, padding:'18px 20px' }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
             <div>
               <div style={{ fontSize:18, fontWeight:700, color:'#edf0f8' }}>{monthNames[mon]} {year}</div>
-              <div style={{ fontSize:12, color:'#7880a0', marginTop:2 }}>{appointments.filter(a=>{ const d=new Date(a.date); return d.getFullYear()===year&&d.getMonth()===mon }).length} citas este mes</div>
+              <div style={{ fontSize:12, color:'#7880a0', marginTop:2 }}>
+                {appointments.filter(a=>{ const d=new Date(a.date); return d.getFullYear()===year&&d.getMonth()===mon }).length} citas · Clic en día con citas para ver detalles · Clic en día vacío para añadir
+              </div>
             </div>
             <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-              <Btn onClick={() => setMonth(new Date(year, mon-1))} style={{ padding:'6px 12px' }}>←</Btn>
+              <Btn onClick={() => setMonth(new Date(year, mon-1))} style={{ padding:'6px 12px' }}>← Anterior</Btn>
               <Btn onClick={() => setMonth(new Date())} style={{ padding:'6px 12px', fontSize:12 }}>Hoy</Btn>
-              <Btn onClick={() => setMonth(new Date(year, mon+1))} style={{ padding:'6px 12px' }}>→</Btn>
+              <Btn onClick={() => setMonth(new Date(year, mon+1))} style={{ padding:'6px 12px' }}>Siguiente →</Btn>
               <Btn variant="primary" onClick={onAdd}>+ Nueva cita</Btn>
             </div>
           </div>
@@ -561,17 +587,52 @@ function CalendarPage({ appointments, month, setMonth, onAdd, onDelete, onSelect
             {Array.from({length:daysInMonth},(_,i)=>i+1).map(d => {
               const isToday = d===today.getDate() && mon===today.getMonth() && year===today.getFullYear()
               const evs = evByDay[d] || []
+              const isOpen = openDay === d
               const dateStr = `${year}-${String(mon+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
               return (
-                <div key={d} onClick={() => onSelectDay(dateStr)}
-                  style={{ minHeight:64, background: isToday?'rgba(139,127,255,.12)': evs.length?'rgba(139,127,255,.06)':'#1c2030', border:`1.5px solid ${isToday?'#8b7fff': evs.length?'rgba(139,127,255,.3)':'rgba(255,255,255,.08)'}`, borderRadius:10, padding:'7px 8px', cursor:'pointer', transition:'all .15s' }}
-                  onMouseEnter={e=>{ if(!isToday) e.currentTarget.style.borderColor='rgba(139,127,255,.5)'; e.currentTarget.style.background='rgba(139,127,255,.1)' }}
-                  onMouseLeave={e=>{ e.currentTarget.style.borderColor=isToday?'#8b7fff':evs.length?'rgba(139,127,255,.3)':'rgba(255,255,255,.08)'; e.currentTarget.style.background=isToday?'rgba(139,127,255,.12)':evs.length?'rgba(139,127,255,.06)':'#1c2030' }}>
-                  <div style={{ fontSize:12, fontWeight: isToday?700:500, color: isToday?'#c4beff':'#b8c0d8', marginBottom:4 }}>{d}</div>
-                  {evs.slice(0,2).map((ev,i)=>(
-                    <div key={i} style={{ fontSize:10, background:'#8b7fff', color:'#fff', borderRadius:4, padding:'2px 5px', marginBottom:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:500 }}>{ev.company}</div>
-                  ))}
-                  {evs.length > 2 && <div style={{ fontSize:9, color:'#7880a0' }}>+{evs.length-2} más</div>}
+                <div key={d} style={{ position:'relative' }}>
+                  <div onClick={() => handleDayClick(d, evs, dateStr)}
+                    style={{ minHeight:64, background: isOpen?'rgba(139,127,255,.18)':isToday?'rgba(139,127,255,.12)':evs.length?'rgba(139,127,255,.06)':'#1c2030', border:`1.5px solid ${isOpen||isToday?'#8b7fff':evs.length?'rgba(139,127,255,.35)':'rgba(255,255,255,.08)'}`, borderRadius:10, padding:'7px 8px', cursor:'pointer', transition:'all .15s' }}
+                    onMouseEnter={e=>{ e.currentTarget.style.borderColor='rgba(139,127,255,.6)'; e.currentTarget.style.background='rgba(139,127,255,.12)' }}
+                    onMouseLeave={e=>{ e.currentTarget.style.borderColor=isOpen||isToday?'#8b7fff':evs.length?'rgba(139,127,255,.35)':'rgba(255,255,255,.08)'; e.currentTarget.style.background=isOpen?'rgba(139,127,255,.18)':isToday?'rgba(139,127,255,.12)':evs.length?'rgba(139,127,255,.06)':'#1c2030' }}>
+                    <div style={{ fontSize:12, fontWeight:isToday?700:500, color:isToday?'#c4beff':'#b8c0d8', marginBottom:4 }}>{d}</div>
+                    {evs.slice(0,2).map((ev,i)=>(
+                      <div key={i} style={{ fontSize:9, background:'#8b7fff', color:'#fff', borderRadius:4, padding:'2px 5px', marginBottom:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:500 }}>
+                        {String(ev.time||'').slice(0,5)} {ev.company}
+                      </div>
+                    ))}
+                    {evs.length > 2 && <div style={{ fontSize:9, color:'#c4beff', fontWeight:600 }}>+{evs.length-2} más ▾</div>}
+                    {evs.length > 0 && evs.length <= 2 && <div style={{ fontSize:9, color:'#7880a0', marginTop:2 }}>▾ ver detalles</div>}
+                    {evs.length === 0 && <div style={{ fontSize:9, color:'#4a5168', marginTop:2 }}>+ añadir</div>}
+                  </div>
+                  {isOpen && (
+                    <div style={{ position:'absolute', top:'calc(100% + 4px)', left:'50%', transform:'translateX(-50%)', zIndex:200, background:'#13161f', border:'1px solid rgba(139,127,255,.5)', borderRadius:12, padding:14, boxShadow:'0 12px 40px rgba(0,0,0,.6)', minWidth:240, maxWidth:280 }}>
+                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+                        <div style={{ fontSize:13, fontWeight:700, color:'#c4beff' }}>📅 {d} de {monthNames[mon]}</div>
+                        <div style={{ display:'flex', gap:5 }}>
+                          <Btn onClick={() => { onSelectDay(dateStr); setOpenDay(null) }} style={{ padding:'3px 9px', fontSize:11 }}>+ Cita</Btn>
+                          <button onClick={()=>setOpenDay(null)} style={{ background:'rgba(255,255,255,.08)', border:'1px solid rgba(255,255,255,.12)', borderRadius:6, color:'#edf0f8', cursor:'pointer', fontSize:13, padding:'3px 7px', lineHeight:1 }}>×</button>
+                        </div>
+                      </div>
+                      {evs.sort((a,b)=>String(a.time||'').localeCompare(String(b.time||''))).map((ev,i)=>(
+                        <div key={i} style={{ background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.08)', borderRadius:9, padding:'10px 12px', marginBottom:8 }}>
+                          <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:8 }}>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ fontSize:13, fontWeight:700, color:'#edf0f8', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{ev.company}</div>
+                              <div style={{ fontSize:12, color:'#8b7fff', marginTop:3, fontWeight:600 }}>🕐 {String(ev.time||'').slice(0,5)}</div>
+                              {ev.service && <div style={{ fontSize:11, color:'#7880a0', marginTop:3 }}>🔧 {ev.service}</div>}
+                              {ev.assigned && <div style={{ fontSize:11, color:'#7880a0', marginTop:2 }}>👤 {ev.assigned}</div>}
+                              {ev.notes && <div style={{ fontSize:11, color:'#5a6382', marginTop:5, fontStyle:'italic', borderTop:'1px solid rgba(255,255,255,.06)', paddingTop:5 }}>"{ev.notes}"</div>}
+                            </div>
+                            <div style={{ display:'flex', flexDirection:'column', gap:4, flexShrink:0 }}>
+                              <button onClick={()=>{ onEdit(ev); setOpenDay(null) }} style={{ background:'rgba(139,127,255,.2)', border:'1px solid rgba(139,127,255,.35)', borderRadius:6, color:'#c4beff', cursor:'pointer', fontSize:11, padding:'4px 8px', fontWeight:600 }}>✏️</button>
+                              <button onClick={()=>{ onDelete(ev.id); if(evs.length===1) setOpenDay(null) }} style={{ background:'rgba(239,68,68,.15)', border:'1px solid rgba(239,68,68,.3)', borderRadius:6, color:'#fca5a5', cursor:'pointer', fontSize:11, padding:'4px 8px', fontWeight:600 }}>🗑️</button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -581,24 +642,27 @@ function CalendarPage({ appointments, month, setMonth, onAdd, onDelete, onSelect
 
       <div>
         <Card title="📋 Próximas citas" sub={`${upcoming.length} pendientes`}>
-          {upcoming.length === 0 && <Empty text="No hay citas próximas" />}
+          {upcoming.length === 0 && <Empty text="No hay citas próximas. Clic en cualquier día del calendario para añadir una." />}
           {upcoming.map((a,i) => {
             const d = new Date(a.date)
             const isToday = d.toDateString() === new Date().toDateString()
+            const isTomorrow = d.toDateString() === new Date(Date.now()+86400000).toDateString()
             return (
-              <div key={i} style={{ background: isToday?'rgba(139,127,255,.1)':'rgba(255,255,255,.03)', border:`1px solid ${isToday?'rgba(139,127,255,.3)':'rgba(255,255,255,.08)'}`, borderRadius:10, padding:'11px 14px', marginBottom:8 }}>
+              <div key={i} style={{ background:isToday?'rgba(139,127,255,.1)':'rgba(255,255,255,.03)', border:`1px solid ${isToday?'rgba(139,127,255,.3)':'rgba(255,255,255,.07)'}`, borderRadius:10, padding:'11px 14px', marginBottom:8 }}>
+                {isToday && <div style={{ fontSize:10, color:'#c4beff', fontWeight:700, marginBottom:5, background:'rgba(139,127,255,.2)', display:'inline-block', padding:'2px 8px', borderRadius:5 }}>HOY</div>}
+                {isTomorrow && <div style={{ fontSize:10, color:'#6ee7b7', fontWeight:700, marginBottom:5, background:'rgba(31,201,138,.15)', display:'inline-block', padding:'2px 8px', borderRadius:5 }}>MAÑANA</div>}
                 <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between' }}>
                   <div style={{ flex:1 }}>
-                    {isToday && <div style={{ fontSize:10, color:'#c4beff', fontWeight:700, marginBottom:4 }}>HOY</div>}
-                    <div style={{ fontSize:13, fontWeight:600, color:'#edf0f8' }}>{a.company}</div>
-                    <div style={{ fontSize:11, color:'#7880a0', marginTop:3 }}>
-                      {d.toLocaleDateString('es-ES', { weekday:'short', day:'numeric', month:'short' })} · {String(a.time||'').slice(0,5)}
-                    </div>
-                    {a.service && <div style={{ fontSize:10, color:'#8b7fff', marginTop:4 }}>🔧 {a.service}</div>}
-                    {a.assigned && <div style={{ fontSize:10, color:'#7880a0', marginTop:2 }}>👤 {a.assigned}</div>}
-                    {a.notes && <div style={{ fontSize:11, color:'#5a6382', marginTop:4, fontStyle:'italic' }}>"{a.notes}"</div>}
+                    <div style={{ fontSize:13, fontWeight:700, color:'#edf0f8' }}>{a.company}</div>
+                    <div style={{ fontSize:12, color:'#8b7fff', marginTop:3, fontWeight:600 }}>🕐 {String(a.time||'').slice(0,5)} · {d.toLocaleDateString('es-ES', { weekday:'short', day:'numeric', month:'short' })}</div>
+                    {a.service && <div style={{ fontSize:11, color:'#7880a0', marginTop:3 }}>🔧 {a.service}</div>}
+                    {a.assigned && <div style={{ fontSize:11, color:'#7880a0', marginTop:2 }}>👤 {a.assigned}</div>}
+                    {a.notes && <div style={{ fontSize:11, color:'#5a6382', marginTop:5, fontStyle:'italic', borderTop:'1px solid rgba(255,255,255,.06)', paddingTop:5 }}>"{a.notes}"</div>}
                   </div>
-                  <button onClick={()=>onDelete(a.id)} style={{ background:'none', border:'none', color:'#ef4444', cursor:'pointer', fontSize:16, padding:'0 0 0 8px', opacity:.6 }} onMouseEnter={e=>e.currentTarget.style.opacity='1'} onMouseLeave={e=>e.currentTarget.style.opacity='.6'}>×</button>
+                  <div style={{ display:'flex', flexDirection:'column', gap:4, marginLeft:8 }}>
+                    <button onClick={()=>onEdit(a)} style={{ background:'rgba(139,127,255,.15)', border:'1px solid rgba(139,127,255,.3)', borderRadius:6, color:'#c4beff', cursor:'pointer', fontSize:11, padding:'4px 7px' }}>✏️</button>
+                    <button onClick={()=>onDelete(a.id)} style={{ background:'rgba(239,68,68,.12)', border:'1px solid rgba(239,68,68,.25)', borderRadius:6, color:'#fca5a5', cursor:'pointer', fontSize:11, padding:'4px 7px' }}>🗑️</button>
+                  </div>
                 </div>
               </div>
             )
