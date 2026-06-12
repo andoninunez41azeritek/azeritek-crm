@@ -52,7 +52,7 @@ export default function Home() {
 
   // Forms
   const emptyLead = { name:'', sector:'', amount:'', monthly:'', assigned:'AN', status:'contactado', flag_color:'', flag_date:'' }
-  const emptyCo = { name:'', contact:'', email:'', phone:'', type:'', service: SERVICES[0] }
+  const emptyCo = { name:'', contact:'', email:'', phone:'', type:'', service: [] }
   const emptyCita = { company:'', date:'', time:'10:00', service: SERVICES[0], assigned:'Andoni', notes:'' }
   const emptyPipeline = { status:'contactado', assigned:'AN', sector:'', amount:'', monthly:'' }
 
@@ -101,7 +101,7 @@ export default function Home() {
   // ── COMPANIES ──
   async function saveCo() {
     if (!formCo.name.trim()) return
-    const payload = { ...formCo, type: formCo.type || types[0]?.name }
+    const payload = { ...formCo, type: formCo.type || types[0]?.name, service: Array.isArray(formCo.service) ? formCo.service : [] }
     if (editTarget) {
       const { data } = await supabase.from('companies').update(payload).eq('id', editTarget.id).select()
       if (data) setCompanies(companies.map(c => c.id === editTarget.id ? data[0] : c))
@@ -236,7 +236,7 @@ export default function Home() {
             <CompaniesPage companies={filteredCos} types={types} filter={coFilter} setFilter={setCoFilter}
               allCompanies={companies} role={role}
               onAdd={() => { setFormCo(emptyCo); setEditTarget(null); setModal('addCo') }}
-              onEdit={co => { setFormCo({ name:co.name, contact:co.contact||'', email:co.email||'', phone:co.phone||'', type:co.type||'', service:co.service||SERVICES[0] }); setEditTarget(co); setModal('addCo') }}
+              onEdit={co => { setFormCo({ name:co.name, contact:co.contact||'', email:co.email||'', phone:co.phone||'', type:co.type||'', service: Array.isArray(co.service) ? co.service : (co.service ? co.service.split(',').map(s=>s.trim()).filter(Boolean) : []) }); setEditTarget(co); setModal('addCo') }}
               onDelete={deleteCo}
               onSendPipeline={co => { setEditTarget(co); setFormPipeline({ ...emptyPipeline, sector: co.type||'' }); setModal('sendPipeline') }}
             />
@@ -266,7 +266,29 @@ export default function Home() {
           </div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
             <FSel label="Tipo de empresa" value={formCo.type} onChange={v=>setFormCo({...formCo,type:v})} options={types.map(t=>t.name)} />
-            <FSel label="Servicio de interés" value={formCo.service} onChange={v=>setFormCo({...formCo,service:v})} options={SERVICES} />
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:12, color:'#b8c0d8', marginBottom:8, display:'block', fontWeight:500 }}>Servicios de interés <span style={{ color:'#7880a0', fontWeight:400 }}>(selecciona uno o varios)</span></label>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+              {SERVICES.map(s => {
+                const selected = Array.isArray(formCo.service) ? formCo.service.includes(s) : false
+                return (
+                  <div key={s} onClick={() => {
+                    const curr = Array.isArray(formCo.service) ? formCo.service : []
+                    const updated = curr.includes(s) ? curr.filter(x=>x!==s) : [...curr, s]
+                    setFormCo({...formCo, service: updated})
+                  }} style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 11px', borderRadius:8, border:`1px solid ${selected?'rgba(139,127,255,.5)':'rgba(255,255,255,.15)'}`, background:selected?'rgba(139,127,255,.15)':'#1c2030', cursor:'pointer', transition:'all .15s' }}>
+                    <div style={{ width:16, height:16, borderRadius:4, border:`2px solid ${selected?'#8b7fff':'rgba(255,255,255,.3)'}`, background:selected?'#8b7fff':'transparent', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, transition:'all .15s' }}>
+                      {selected && <span style={{ color:'#fff', fontSize:11, lineHeight:1 }}>✓</span>}
+                    </div>
+                    <span style={{ fontSize:12, color:selected?'#edf0f8':'#b8c0d8', fontWeight:selected?600:400 }}>{s}</span>
+                  </div>
+                )
+              })}
+            </div>
+            {Array.isArray(formCo.service) && formCo.service.length === 0 && (
+              <div style={{ fontSize:11, color:'#f5a623', marginTop:6 }}>⚠️ Selecciona al menos un servicio</div>
+            )}
+          </div>
           </div>
           <div style={{ display:'flex', gap:8, marginTop:8 }}>
             <Btn variant="primary" onClick={saveCo}>✓ {editTarget ? 'Guardar cambios' : 'Crear empresa'}</Btn>
@@ -709,7 +731,13 @@ function CompaniesPage({ companies, types, filter, setFilter, allCompanies, role
                     <span style={{ width:6, height:6, borderRadius:'50%', background:col, display:'inline-block', flexShrink:0 }}></span>{c.type || 'Sin tipo'}
                   </div>
                 </div>
-                {c.service && <span style={{ fontSize:10, padding:'3px 9px', borderRadius:6, background:'rgba(139,127,255,.18)', color:'#c4beff', border:'1px solid rgba(139,127,255,.3)', whiteSpace:'nowrap', alignSelf:'flex-start', fontWeight:500 }}>{c.service}</span>}
+                {c.service && (
+                  <div style={{ display:'flex', gap:4, flexWrap:'wrap', alignSelf:'flex-start', maxWidth:140 }}>
+                    {(Array.isArray(c.service) ? c.service : c.service.split(',').map(s=>s.trim()).filter(Boolean)).map((s,j) => (
+                      <span key={j} style={{ fontSize:10, padding:'2px 7px', borderRadius:5, background:'rgba(139,127,255,.18)', color:'#c4beff', border:'1px solid rgba(139,127,255,.3)', whiteSpace:'nowrap', fontWeight:500 }}>{s}</span>
+                    ))}
+                  </div>
+                )}
               </div>
               <div style={{ borderTop:'1px solid rgba(255,255,255,.06)', paddingTop:10, display:'grid', gap:5 }}>
                 {c.contact && <div style={{ display:'flex', gap:8, fontSize:12, color:'#b8c0d8' }}><span>👤</span><span>{c.contact}</span></div>}
