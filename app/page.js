@@ -2,6 +2,17 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+  return isMobile
+}
+
 const PIPE_COLS = [
   { id: 'sin_contacto', label: 'Sin contacto', color: '#4a5168' },
   { id: 'contactado', label: 'Contactado', color: '#3b9eff' },
@@ -31,6 +42,8 @@ const COMERCIALES = [
 ]
 
 export default function Home() {
+  const isMobile = useIsMobile()
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -214,18 +227,33 @@ export default function Home() {
   if (!session) return <LoginScreen />
 
   return (
-    <div style={{ display:'flex', height:'100vh', background:'#0b0d12', color:'#edf0f8', fontFamily:'var(--font-sans)' }}>
-      <Sidebar page={page} setPage={setPage} role={role} profile={profile} onLogout={logout} leads={leads} />
-      <div style={{ flex:1, overflow:'auto', display:'flex', flexDirection:'column' }}>
-        <Topbar page={page} role={role}
-          onNewCita={() => { setFormCita(emptyCita); setModal('addCita') }}
+    <div style={{ display:'flex', height:'100vh', background:'#0b0d12', color:'#edf0f8', fontFamily:'var(--font-sans)', position:'relative', overflow:'hidden' }}>
+      {/* Overlay móvil */}
+      {isMobile && sidebarOpen && (
+        <div onClick={() => setSidebarOpen(false)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.65)', zIndex:150 }} />
+      )}
+
+      {/* Sidebar — fijo en móvil, normal en desktop */}
+      <div style={{
+        position: isMobile ? 'fixed' : 'relative',
+        left: isMobile ? (sidebarOpen ? 0 : -240) : 0,
+        top: 0, bottom: 0, zIndex: isMobile ? 200 : 'auto',
+        transition: 'left .25s ease', flexShrink: 0,
+      }}>
+        <Sidebar page={page} setPage={p => { setPage(p); setSidebarOpen(false) }} role={role} profile={profile} onLogout={logout} leads={leads} />
+      </div>
+
+      {/* Main content */}
+      <div style={{ flex:1, overflow:'auto', display:'flex', flexDirection:'column', minWidth:0, paddingBottom: isMobile ? 64 : 0 }}>
+        <Topbar page={page} role={role} isMobile={isMobile} onMenuToggle={() => setSidebarOpen(!sidebarOpen)}
+          onNewCita={() => { setFormCita(emptyCita); setEditTarget(null); setModal('addCita') }}
           onAddCo={() => { setFormCo(emptyCo); setEditTarget(null); setModal('addCo') }}
           onAddLead={() => { setFormLead(emptyLead); setEditTarget(null); setModal('addLead') }}
         />
-        <div style={{ padding:'20px 24px', flex:1 }}>
-          {page === 'dashboard' && <Dashboard leads={leads} companies={companies} setPage={setPage} appointments={appointments} />}
+        <div style={{ padding: isMobile ? '14px' : '20px 24px', flex:1 }}>
+          {page === 'dashboard' && <Dashboard leads={leads} companies={companies} setPage={setPage} appointments={appointments} isMobile={isMobile} />}
           {page === 'calendar' && (
-            <CalendarPage appointments={appointments} month={calMonth} setMonth={setCalMonth}
+            <CalendarPage appointments={appointments} month={calMonth} setMonth={setCalMonth} isMobile={isMobile}
               onAdd={() => { setFormCita(emptyCita); setEditTarget(null); setModal('addCita') }}
               onDelete={deleteCita}
               onEdit={a => { setFormCita({ company:a.company||'', date:a.date||'', time:a.time||'10:00', service:a.service||SERVICES[0], assigned:a.assigned||'Andoni', notes:a.notes||'' }); setEditTarget(a); setModal('addCita') }}
@@ -234,7 +262,7 @@ export default function Home() {
           )}
           {page === 'companies' && (
             <CompaniesPage companies={filteredCos} types={types} filter={coFilter} setFilter={setCoFilter}
-              allCompanies={companies} role={role}
+              allCompanies={companies} role={role} isMobile={isMobile}
               onAdd={() => { setFormCo(emptyCo); setEditTarget(null); setModal('addCo') }}
               onEdit={co => { setFormCo({ name:co.name, contact:co.contact||'', email:co.email||'', phone:co.phone||'', type:co.type||'', service: Array.isArray(co.service) ? co.service : (co.service ? co.service.split(',').map(s=>s.trim()).filter(Boolean) : []) }); setEditTarget(co); setModal('addCo') }}
               onDelete={deleteCo}
@@ -242,7 +270,7 @@ export default function Home() {
             />
           )}
           {page === 'pipeline' && (
-            <PipelinePage leads={filteredLeads} allLeads={leads} filter={pipeFilter} setFilter={setPipeFilter}
+            <PipelinePage leads={filteredLeads} allLeads={leads} filter={pipeFilter} setFilter={setPipeFilter} isMobile={isMobile}
               onAdd={() => { setFormLead(emptyLead); setEditTarget(null); setModal('addLead') }}
               onEdit={l => { setFormLead({ name:l.name, sector:l.sector||'', amount:l.amount||'', monthly:l.monthly||'', assigned:l.assigned||'AN', status:l.status||'contactado', flag_color:l.flag_color||'', flag_date:l.flag_date||'' }); setEditTarget(l); setModal('addLead') }}
               onDelete={deleteLead}
@@ -251,9 +279,28 @@ export default function Home() {
           )}
           {page === 'types' && role === 'admin' && <TypesPage types={types} companies={companies} newType={newType} setNewType={setNewType} selColor={selColor} setSelColor={setSelColor} onAdd={addType} onDelete={deleteType} colors={COLORS} />}
           {page === 'team' && role === 'admin' && <TeamPage leads={leads} />}
-          {page === 'reports' && role === 'admin' && <ReportsPage leads={leads} companies={companies} />}
+          {page === 'reports' && role === 'admin' && <ReportsPage leads={leads} companies={companies} isMobile={isMobile} />}
         </div>
       </div>
+
+      {/* Bottom nav móvil */}
+      {isMobile && (
+        <div style={{ position:'fixed', bottom:0, left:0, right:0, background:'#13161f', borderTop:'1px solid rgba(255,255,255,.12)', display:'flex', zIndex:100, height:64 }}>
+          {[
+            { id:'dashboard', icon:'🏠', label:'Inicio' },
+            { id:'companies', icon:'🏢', label:'Empresas' },
+            { id:'pipeline', icon:'📊', label:'Pipeline' },
+            { id:'calendar', icon:'📅', label:'Citas' },
+            { id:'menu', icon:'☰', label:'Menú' },
+          ].map(item => (
+            <button key={item.id} onClick={() => item.id === 'menu' ? setSidebarOpen(!sidebarOpen) : setPage(item.id)}
+              style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:3, background:'none', border:'none', cursor:'pointer', color: page===item.id?'#8b7fff':'#7880a0', transition:'color .15s', padding:'8px 0' }}>
+              <span style={{ fontSize:20 }}>{item.icon}</span>
+              <span style={{ fontSize:10, fontWeight: page===item.id?700:400 }}>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── MODALS ── */}
       {(modal === 'addCo') && (
@@ -452,32 +499,38 @@ function NavItem({ item, active, onClick }) {
 }
 
 // ── TOPBAR ─────────────────────────────────────────────
-function Topbar({ page, role, onNewCita, onAddCo, onAddLead }) {
-  const titles = { dashboard:'Dashboard', calendar:'Calendario de citas', companies:'Empresas', pipeline:'Pipeline comercial', types:'Tipos de empresa', team:'Equipo', reports:'Informes' }
+function Topbar({ page, role, isMobile, onMenuToggle, onNewCita, onAddCo, onAddLead }) {
+  const titles = { dashboard:'Dashboard', calendar:'Calendario', companies:'Empresas', pipeline:'Pipeline', types:'Tipos', team:'Equipo', reports:'Informes' }
   const hints = { dashboard:'Resumen general', calendar:'Gestiona tus reuniones', companies:'Clientes y prospectos', pipeline:'Estado de los leads', types:'Categorías de empresa', team:'Miembros del equipo', reports:'Métricas y rendimiento' }
   return (
-    <div style={{ padding:'14px 24px', background:'#13161f', borderBottom:'1px solid rgba(255,255,255,.12)', display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
-      <div>
-        <div style={{ fontSize:17, fontWeight:700, color:'#edf0f8' }}>{titles[page]}</div>
-        <div style={{ fontSize:11, color:'#7880a0', marginTop:2 }}>{hints[page]}</div>
+    <div style={{ padding: isMobile ? '12px 14px' : '14px 24px', background:'#13161f', borderBottom:'1px solid rgba(255,255,255,.12)', display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+        {isMobile && (
+          <button onClick={onMenuToggle} style={{ background:'none', border:'none', color:'#edf0f8', cursor:'pointer', fontSize:20, padding:'4px', lineHeight:1 }}>☰</button>
+        )}
+        <div>
+          <div style={{ fontSize: isMobile ? 15 : 17, fontWeight:700, color:'#edf0f8' }}>{titles[page]}</div>
+          {!isMobile && <div style={{ fontSize:11, color:'#7880a0', marginTop:2 }}>{hints[page]}</div>}
+        </div>
       </div>
-      <div style={{ display:'flex', gap:8 }}>
-        <Btn onClick={onNewCita} title="Añadir una cita al calendario">📅 Nueva cita</Btn>
-        {page === 'pipeline' && <Btn variant="primary" onClick={onAddLead}>➕ Nuevo lead</Btn>}
-        {role === 'admin' && page !== 'pipeline' && <Btn variant="primary" onClick={onAddCo}>🏢 Añadir empresa</Btn>}
+      <div style={{ display:'flex', gap:6 }}>
+        {!isMobile && <Btn onClick={onNewCita} title="Añadir cita">📅 Nueva cita</Btn>}
+        {isMobile && page === 'calendar' && <Btn variant="primary" onClick={onNewCita} style={{ padding:'7px 10px', fontSize:12 }}>+ Cita</Btn>}
+        {page === 'pipeline' && <Btn variant="primary" onClick={onAddLead} style={{ fontSize: isMobile ? 12 : 13, padding: isMobile ? '7px 10px' : '7px 14px' }}>➕ {isMobile ? '' : 'Nuevo lead'}</Btn>}
+        {role === 'admin' && page === 'companies' && <Btn variant="primary" onClick={onAddCo} style={{ fontSize: isMobile ? 12 : 13, padding: isMobile ? '7px 10px' : '7px 14px' }}>🏢 {isMobile ? '' : 'Nueva empresa'}</Btn>}
       </div>
     </div>
   )
 }
 
 // ── DASHBOARD ──────────────────────────────────────────
-function Dashboard({ leads, companies, setPage, appointments }) {
+function Dashboard({ leads, companies, setPage, appointments, isMobile }) {
   const mrr = leads.filter(l=>l.status==='mantenimiento').reduce((s,l)=>s+(Number(l.monthly)||0),0)
   const today = new Date().toISOString().split('T')[0]
   const todayCitas = appointments.filter(a => a.date === today)
   return (
     <div>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
+      <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4,1fr)', gap: isMobile ? 8 : 12, marginBottom: isMobile ? 12 : 20 }}>
         {[
           { icon:'🏢', val: companies.length, label:'Empresas', sub:'+3 este mes', color:'rgba(139,127,255,.15)', ic:'#c4beff', page:'companies' },
           { icon:'📊', val: leads.length, label:'Leads activos', sub: leads.filter(l=>l.status==='presupuesto_enviado').length+' presupuestos pendientes', color:'rgba(245,166,35,.15)', ic:'#fcd34d', page:'pipeline' },
@@ -509,7 +562,7 @@ function Dashboard({ leads, companies, setPage, appointments }) {
         </div>
       )}
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:16 }}>
+      <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 10 : 16, marginBottom: isMobile ? 10 : 16 }}>
         <Card title="🕐 Actividad reciente" sub="Últimos leads añadidos">
           {leads.length === 0 && <Empty text="No hay leads todavía. ¡Añade el primero desde Pipeline!" />}
           {leads.slice(0,5).map((l,i) => (
@@ -535,7 +588,7 @@ function Dashboard({ leads, companies, setPage, appointments }) {
       </div>
 
       <Card title="📊 Estado del pipeline" action={<Btn onClick={()=>setPage('pipeline')}>Ver pipeline →</Btn>}>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:8 }}>
+        <div style={{ display:'grid', gridTemplateColumns: isMobile ? 'repeat(3,1fr)' : 'repeat(6,1fr)', gap:8 }}>
           {PIPE_COLS.slice(1).map(col => (
             <div key={col.id} onClick={()=>setPage('pipeline')} style={{ background:'#1c2030', border:'1px solid rgba(255,255,255,.12)', borderRadius:10, padding:12, textAlign:'center', cursor:'pointer', transition:'all .15s' }}
               onMouseEnter={e=>{ e.currentTarget.style.borderColor=col.color; e.currentTarget.style.background='#262c3e' }}
@@ -552,7 +605,7 @@ function Dashboard({ leads, companies, setPage, appointments }) {
 
 // ── CALENDAR ───────────────────────────────────────────
 // ── CALENDAR ───────────────────────────────────────────
-function CalendarPage({ appointments, month, setMonth, onAdd, onDelete, onEdit, onSelectDay }) {
+function CalendarPage({ appointments, month, setMonth, onAdd, onDelete, onEdit, onSelectDay, isMobile }) {
   const [openDay, setOpenDay] = useState(null)
   const year = month.getFullYear()
   const mon = month.getMonth()
@@ -584,7 +637,7 @@ function CalendarPage({ appointments, month, setMonth, onAdd, onDelete, onEdit, 
   }
 
   return (
-    <div style={{ display:'grid', gridTemplateColumns:'1fr 300px', gap:16 }}>
+    <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 300px', gap:16 }}>
       <div>
         <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.12)', borderRadius:14, padding:'18px 20px' }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
@@ -696,7 +749,7 @@ function CalendarPage({ appointments, month, setMonth, onAdd, onDelete, onEdit, 
 }
 
 // ── COMPANIES ──────────────────────────────────────────
-function CompaniesPage({ companies, types, filter, setFilter, allCompanies, role, onAdd, onEdit, onDelete, onSendPipeline }) {
+function CompaniesPage({ companies, types, filter, setFilter, allCompanies, role, isMobile, onAdd, onEdit, onDelete, onSendPipeline }) {
   return (
     <div>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
@@ -716,7 +769,7 @@ function CompaniesPage({ companies, types, filter, setFilter, allCompanies, role
         <Empty text={filter==='all' ? "No hay empresas todavía. Pulsa '+ Nueva empresa' para añadir la primera." : "No hay empresas en esta categoría."} />
       )}
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+      <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap:12 }}>
         {companies.map((c,i) => {
           const col = types.find(t=>t.name===c.type)?.color || '#7880a0'
           return (
@@ -760,7 +813,7 @@ function CompaniesPage({ companies, types, filter, setFilter, allCompanies, role
 }
 
 // ── PIPELINE ───────────────────────────────────────────
-function PipelinePage({ leads, allLeads, filter, setFilter, onAdd, onEdit, onDelete, onChangeStatus }) {
+function PipelinePage({ leads, allLeads, filter, setFilter, isMobile, onAdd, onEdit, onDelete, onChangeStatus }) {
   const presup = allLeads.filter(l=>l.status==='presupuesto_enviado').reduce((s,l)=>s+(Number(l.amount)||0),0)
   const ganado = allLeads.filter(l=>l.status==='pedido').reduce((s,l)=>s+(Number(l.amount)||0),0)
   const mant = allLeads.filter(l=>l.status==='mantenimiento').reduce((s,l)=>s+(Number(l.monthly)||0),0)
@@ -769,7 +822,7 @@ function PipelinePage({ leads, allLeads, filter, setFilter, onAdd, onEdit, onDel
 
   return (
     <div>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:16 }}>
+      <div style={{ display:'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4,1fr)', gap: isMobile ? 8 : 10, marginBottom:16 }}>
         {[
           { label:'Presupuestado', val:`€${presup.toLocaleString()}`, sub: allLeads.filter(l=>l.status==='presupuesto_enviado').length+' leads', bg:'rgba(139,127,255,.08)', bd:'rgba(139,127,255,.25)', color:'#c4beff' },
           { label:'Ganado', val:`€${ganado.toLocaleString()}`, sub: allLeads.filter(l=>l.status==='pedido').length+' leads', bg:'rgba(31,201,138,.08)', bd:'rgba(31,201,138,.25)', color:'#6ee7b7' },
@@ -972,12 +1025,13 @@ function ReportsPage({ leads, companies }) {
 
 // ── SHARED COMPONENTS ──────────────────────────────────
 function Modal({ title, onClose, children }) {
+  const isMobile = useIsMobile()
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, padding:20 }} onClick={e=>{ if(e.target===e.currentTarget) onClose() }}>
-      <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.2)', borderRadius:16, padding:28, width:'100%', maxWidth:520, maxHeight:'90vh', overflow:'auto' }}>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:22 }}>
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.75)', display:'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent:'center', zIndex:1000, padding: isMobile ? 0 : 20 }} onClick={e=>{ if(e.target===e.currentTarget) onClose() }}>
+      <div style={{ background:'#13161f', border:'1px solid rgba(255,255,255,.2)', borderRadius: isMobile ? '16px 16px 0 0' : 16, padding: isMobile ? '20px 16px 32px' : 28, width:'100%', maxWidth: isMobile ? '100%' : 520, maxHeight: isMobile ? '90vh' : '90vh', overflow:'auto' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
           <div style={{ fontSize:16, fontWeight:700, color:'#edf0f8' }}>{title}</div>
-          <button onClick={onClose} style={{ background:'none', border:'none', color:'#7880a0', cursor:'pointer', fontSize:20, padding:'0 4px', lineHeight:1 }} onMouseEnter={e=>e.currentTarget.style.color='#edf0f8'} onMouseLeave={e=>e.currentTarget.style.color='#7880a0'}>×</button>
+          <button onClick={onClose} style={{ background:'rgba(255,255,255,.08)', border:'1px solid rgba(255,255,255,.15)', borderRadius:8, color:'#edf0f8', cursor:'pointer', fontSize:16, padding:'4px 10px', lineHeight:1 }}>×</button>
         </div>
         {children}
       </div>
